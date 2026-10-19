@@ -273,7 +273,7 @@ async function decodeAudio(path: string): Promise<Float32Array> {
 
 type Pattern = { offsets: number[]; at: number[] };
 
-function analyzeSong(pcm: Float32Array, sr: number): { beats: number[]; bpm?: number; energy: number[]; beatPattern?: Pattern } {
+function analyzeSong(pcm: Float32Array, sr: number): { beats: number[]; bpm?: number; energy: number[]; beatPattern?: Pattern; bright: number[]; sections: { s: number; e: number; b: number; kind: string }[]; mood: string } {
   const win = 1024, hop = 512;
   const n = Math.max(1, Math.floor((pcm.length - win) / hop) + 1);
   const e = new Float32Array(n);
@@ -350,6 +350,59 @@ function analyzeSong(pcm: Float32Array, sr: number): { beats: number[]; bpm?: nu
   const maxStrength = Math.max(...strengths, 1e-9);
   const energy = strengths.map(s => Math.round((s / maxStrength) * 1000) / 1000);
 
+  // ---- mood: per-beat brightness (zero-crossing rate inside the beat span) and
+  // song sections from the smoothed energy curve. Sections drive the cut style:
+  // chill gets long soft crossfades and longer holds, loud/drops get hard cuts.
+  const bright: number[] = [];
+  if (beats.length >= 2) {
+    const zs: number[] = [];
+    let maxZ = 0;
+    for (let bi = 0; bi < beats.length; bi++) {
+      const a = Math.floor(beats[bi] * sr);
+      const b2 = Math.min(pcm.length, Math.floor((beats[bi + 1] ?? beats[bi] + 0.5) * sr));
+      let flips = 0;
+      for (let k = a + 1; k < b2; k++) if ((pcm[k] >= 0) !== (pcm[k - 1] >= 0)) flips++;
+      const z = flips / Math.max(1, b2 - a);
+      zs.push(z);
+      if (z > maxZ) maxZ = z;
+    }
+    for (const z of zs) bright.push(Math.round((z / (maxZ || 1)) * 1000) / 1000);
+  }
+  const sections: { s: number; e: number; b: number; kind: string }[] = [];
+  if (beats.length >= 8) {
+    // classify per song: a section is "loud" relative to the song's own median
+    // energy (masters with little dynamics make max-normalisation useless here)
+    const pos2 = energy.slice(1).filter(x => x > 0).sort((a, b) => a - b);
+    const medE = pos2[Math.floor(pos2.length / 2)] || 0.25;
+    const W = 8;
+    const rows: { s: number; e: number; b: number; ra: number }[] = [];
+    for (let bi = 0; bi + 1 < beats.length; bi += W) {
+      let sum = 0, bs = 0, c = 0;
+      for (let k = bi; k < Math.min(beats.length, bi + W); k++) { sum += energy[k]; bs += bright[k] ?? 0.5; c++; }
+      if (c) { const e = sum / c; rows.push({ s: beats[bi], e, b: bs / c, ra: e / medE, bi }); }
+    }
+    for (let i2 = 0; i2 < rows.length; i2++) {
+      const bR = rows[Math.max(0, i2 - 1)].ra, aR = rows[Math.min(rows.length - 1, i2 + 1)].ra;
+      const r = rows[i2];
+      let kind: string;
+      if (r.ra - bR > 0.3 && aR > r.ra) kind = 'build';
+      else if (r.ra >= 1.35 && bR <= r.ra - 0.3) kind = 'drop';
+      else if (r.ra < 0.65) kind = 'chill';
+      else if (r.ra >= 1.35) kind = 'loud';
+      else kind = 'mid';
+      sections.push({ s: Math.round(r.s * 100) / 100, e: Math.round(r.e * 1000) / 1000, b: Math.round(r.b * 1000) / 1000, kind, bi: r.bi });
+    }
+  }
+  let mood = 'mixed';
+  if (sections.length) {
+    const lvl = Math.round(1000 * e.reduce((a, b) => a + b, 0) / n) / 1000; // absolute loudness
+    const calmFrac = sections.filter(x => x.e < 0.3).length / sections.length;
+    mood = lvl >= 0.25 && (bpm ?? 0) >= 150 ? 'aggressive'
+      : lvl >= 0.15 && sections.some(x => x.kind === 'drop') ? 'energetic'
+      : lvl < 0.08 || calmFrac >= 0.5 ? 'calm'
+      : 'mid';
+  }
+
   // ---- stylistic stutter replication: find off-beat hits that recur at a
   // consistent relative position inside the beat interval (e.g. chopped-vocal
   // doubles at half-beat) and report where they appear, per beat index.
@@ -385,7 +438,7 @@ function analyzeSong(pcm: Float32Array, sr: number): { beats: number[]; bpm?: nu
       .sort((a, b) => b.count - a.count)[0];
     if (best) beatPattern = { offsets: best.offsets, at: best.beats };
   }
-  return { beats, bpm, energy, beatPattern };
+  return { beats, bpm: bpm ? Math.round(bpm * 10) / 10 : undefined, energy, beatPattern, bright, sections, mood };
 }
 
 // ---------- 3. HTTP server + 4.PAGE ----------
@@ -412,8 +465,10 @@ const PAGE = `<!doctype html>
     border-radius: 8px; padding: 10px 14px; margin-right: 12px; cursor: pointer; font-size: 1rem; }
   #towRow { transition: opacity .2s; }
   #towRow:has(#towOn:not(:checked)) { opacity: .55; }
-  #towRow input[type=time] { background: #111; color: #eee; border: 1px solid #444;
+  #towRow input[type=time], #dayRow input[type=date] { background: #111; color: #eee; border: 1px solid #444;
                              border-radius: 6px; padding: 4px 6px; color-scheme: dark; }
+  #dayRow { transition: opacity .2s; }
+  #dayRow:has(#dayOnly:not(:checked)) { opacity: .55; }
   #towList .trow { display: flex; align-items: center; gap: 7px; margin: 7px 0 0 22px; }
   #towList .trow .rm { background: #26262b; border: 1px solid #444; border-radius: 6px;
                        color: #aaa; padding: 3px 9px; cursor: pointer; font-size: .85rem; }
@@ -491,6 +546,10 @@ const PAGE = `<!doctype html>
     <div id="towList"></div>
     <button type="button" id="towAdd" title="Add another time range">+ add range</button>
   </div>
+  <label id="dayRow" style="display:none">
+    <input type="checkbox" id="dayOnly"> only clips taken on
+    <input type="date" id="daySel">
+  </label>
   <label id="scoreRow" style="display:none">
     <input type="checkbox" id="scoreOnly"> only the most interesting clips — keep top
     <input type="number" id="scorePct" min="10" max="100" step="10" value="50" style="width:3.5em"> %
@@ -534,6 +593,7 @@ const PAGE = `<!doctype html>
     <span id="etitle">✂ Timeline editor</span>
     <span id="estats"></span>
     <button id="eSeek" title="Fresh in-points for every segment">Re-seek all</button>
+    <button id="eShuffle" title="Regenerate the edit with a bumped seed (new in-points everywhere, same song timing)">Reshuffle</button>
     <button id="eRefit" title="Discard edits, rebuild from current settings/filters">Rebuild</button>
     <button id="ePlay">▶ Preview</button>
     <button id="eDone">Done</button>
@@ -567,10 +627,12 @@ const PAGE = `<!doctype html>
 <script>
 var vids = [];
 var towOn = false, towActive = []; // time-window (list of ranges, hour floats); off when towOn is false or none valid
+var dayOn = false, daySel = ''; // day filter: only clips stamped on this YYYY-MM-DD when enabled
 var scoreMin = null, arT = null; // top-% score and aspect-ratio (w/h) filters; null = off
 var mvT = null; // fast-motion (vehicle) top-% filter; null = off
 var file = null, beats = null, bpm = null, energy = [];
 var beatPattern = { offsets: [], at: [] };
+var moodData = { bright: [], sections: [], mood: 'mixed' };
 var $ = function (id) { return document.getElementById(id); };
 
 // ---- Generation parameters (all user-editable in the settings panel) ----
@@ -583,6 +645,9 @@ var DEFAULTS = {
   darkMean: 3, darkBrightPct: 1, darkRetries: 4,
   useLrf: true,
   precache: true,
+  mood: true,
+  fancy: true,
+  shuffle: false,
   skipJunk: true,
   replicate: true,
   aggrThreshold: 0.85, aggrHalfRun: 3, aggrQuarterRun: 6,
@@ -615,6 +680,9 @@ var SCHEMA = [
   { k: 'useLrf',         l: 'Play low-res proxies (LRF)',    type: 'check' },
   { k: 'precache',       l: 'Precache whole clips in RAM',   type: 'check' },
   { k: 'skipJunk',       l: 'Skip mostly-dark clips (tunnels)', type: 'check' },
+  { k: 'mood',           l: 'Mood matching (cuts and fades follow the music)', type: 'check' },
+  { k: 'fancy',          l: 'Indie transitions (colour mixes, crush, punch)', type: 'check' },
+  { k: 'shuffle',        l: 'Shuffle clip order (breaks day/chronology)', type: 'check' },
   { k: 'replicate',      l: "Replicate the song's own stutter cuts", type: 'check' },
   { k: 'aggrThreshold',  l: 'Aggressive section energy ≥',   min: 0.6, max: 1.05, step: 0.05 },
   { k: 'aggrHalfRun',    l: 'Half-beat cuts for run ≥ beats', min: 2, max: 8, step: 1 },
@@ -778,10 +846,9 @@ function applyParams(skipId) {
 // Apply new params to a running slideshow: rebuild the schedule, keep pace with the song.
 function rebuildSchedule() {
   var ct = audio.currentTime;
-  cuts = tl ? tlCuts()
-    : beats && beats.length > 1
-    ? buildCuts(beats, energy, +audio.duration.toFixed(2))
-    : fallbackGrid(+audio.duration.toFixed(2));
+  if (tl) { cuts = tlCuts(); cutFades = cuts.map(function () { return P.fadeMs; }); }
+  else if (beats && beats.length > 1) cuts = buildCuts(beats, energy, +audio.duration.toFixed(2));
+  else cuts = fallbackGrid(+audio.duration.toFixed(2));
   cutIdx = 0;
   var next = -1;
   for (var c = cuts.length - 1; c >= 0; c--) if (cuts[c] <= ct) { next = c; break; }
@@ -807,11 +874,14 @@ $('reset').addEventListener('click', function () {
 function poolFor() {
   var wins = parseWindows(P.skipWindows);
   var tow = towOn && towActive.length;
+  var dayF = dayOn && daySel;
   var junk = P.skipJunk && vids.some(function (v) { return (v.dk ?? 0) >= 0.5; });
-  if (!tow && scoreMin === null && arT === null && mvT === null && !junk && !wins.length) return vids;
+  if (!tow && !dayF && scoreMin === null && arT === null && mvT === null && !junk && !wins.length) return vids;
   return vids.filter(function (v) {
     if (P.skipJunk && (v.dk ?? 0) >= 0.5) return false; // mostly-dark junk: black flash source
     if (inSkipWindows(v.day, wins)) return false;
+    // "only this day" is exclusive: a clip with no readable stamp is not from it
+    if (dayF && v.day !== daySel) return false;
     if (scoreMin !== null && !(v.score >= scoreMin)) return false;
     if (mvT !== null && !((v.mv ?? 0) >= mvT)) return false; // fast-motion filter
     // ratio filter: clips without readable dimensions never match it
@@ -862,6 +932,7 @@ fetch('/videos').then(function (r) { return r.json(); }).then(function (list) {
   $('nvids').textContent = vids.length + ' videos indexed';
   var timed = vids.some(function (v) { return v.tod !== null; });
   if (timed) { $('towRow').style.display = ''; restoreTow(); }
+  if (vids.some(function (v) { return v.day !== null; })) { $('dayRow').style.display = ''; restoreDay(); }
   if (vids.some(function (v) { return v.ar; })) $('arRow').style.display = '';
   $('scoreRow').style.display = '';
   if (vids.some(function (v) { return (v.mv ?? 0) > 0; })) $('mvRow').style.display = '';
@@ -951,6 +1022,34 @@ function restoreTow() {
   renderTow();
   refreshTow();
 }
+
+// Day filter: one native date input + master toggle; persisted in localStorage['vs-day'].
+function refreshDay() {
+  dayOn = $('dayOnly').checked;
+  daySel = $('daySel').value;
+  try { localStorage.setItem('vs-day', JSON.stringify({ on: dayOn, d: daySel })); } catch (e) { /* storage unavailable */ }
+  refreshCount();
+}
+function restoreDay() {
+  var s = null;
+  try { s = JSON.parse(localStorage.getItem('vs-day') || 'null'); } catch (e) { /* storage unavailable */ }
+  if (!s || !s.d) {
+    // prefill with the day that has the most clips so the toggle is instantly usable
+    var counts = {};
+    vids.forEach(function (v) { if (v.day) counts[v.day] = (counts[v.day] || 0) + 1; });
+    var best = '', bn = 0;
+    for (var k in counts) if (counts[k] > bn) { bn = counts[k]; best = k; }
+    s = { on: false, d: best };
+  }
+  dayOn = !!s.on;
+  daySel = s.d || '';
+  $('dayOnly').checked = dayOn;
+  $('daySel').value = daySel;
+  $('dayOnly').addEventListener('change', refreshDay);
+  $('daySel').addEventListener('input', refreshDay);
+  $('daySel').addEventListener('change', refreshDay);
+  refreshCount();
+}
 $('towOn').addEventListener('change', refreshTow);
 $('towAdd').addEventListener('click', function () {
   towRanges.push({ f: '08:00', t: '20:00' });
@@ -998,8 +1097,9 @@ $('analyze').addEventListener('click', async function () {
     }
     beats = j.beats; bpm = j.bpm; energy = j.energy || [];
     beatPattern = j.beatPattern || { offsets: [], at: [] };
+    moodData = { bright: j.bright || [], sections: j.sections || [], mood: j.mood || 'mixed' };
     $('status').textContent = '';
-    $('summary').textContent = (bpm ? bpm + ' bpm, ' : '') + beats.length + ' beats';
+    $('summary').textContent = (bpm ? bpm + ' bpm, ' : '') + beats.length + ' beats' + (P.mood && moodData.sections.length ? ', ' + moodData.mood : '');
     $('result').hidden = false;
     $('start').disabled = false;
   } catch (err) {
@@ -1009,6 +1109,8 @@ $('analyze').addEventListener('click', async function () {
 
 // --- slideshow ---
 var audio = null, cuts = [], cutIdx = 0, visible = 0, currentId = -1, rafId = 0;
+var cutFades = []; // per-cut crossfade ms (mood-driven), parallel to cuts
+var cutPick = []; // per-cut clip id override (-1 = walk): the drop holds its best clip
 var stages = [$('v0'), $('v1')];
 var startUrl = '';
 applyParams();
@@ -1017,9 +1119,36 @@ applyParams();
 // energy, every 2–3 beats when the song is quiet. Inside held segments the
 // song's own recurring stutter pattern (detected off-beat hits) is replicated
 // beat-accurately; slow→loud ramps still get a taste split; gated by tempo and caps.
-function buildCuts(bts, en, duration) {
+function buildCuts(bts, en, duration, bright, secs) {
+  bright = bright || moodData.bright;
+  secs = secs || moodData.sections;
   var cuts = [], ce = [], ci = [];
   var hi = Math.max(P.energyHi, P.energyLo + 0.05), lo = Math.min(P.energyLo, P.energyHi - 0.05);
+  var secIdxAt = function (t) {
+    for (var s3 = 0; s3 < secs.length; s3++) {
+      if (t >= secs[s3].s && (s3 + 1 >= secs.length || t < secs[s3 + 1].s)) return s3;
+    }
+    return -1;
+  };
+  function fadeFor(t) {
+    if (!P.mood) return P.fadeMs;
+    var si5 = secIdxAt(t);
+    var kind4 = si5 >= 0 ? secs[si5].kind : 'mid';
+    if (kind4 === 'loud' || kind4 === 'drop') return 0;
+    if (kind4 === 'build') return Math.round(P.fadeMs * 0.5);
+    return P.fadeMs;
+  }
+  // drop statements: the drop section opens on one long, best-scored clip
+  var dropT = {}, dropBest = [], dropRank = 0, cutPick2 = [];
+  var dropIdx = {}; // drop-open beat index → exact walk landing
+  if (P.mood && secs.length) {
+    secs.forEach(function (x) {
+      if (x.kind === 'drop') { dropT[x.s] = 1; if (x.bi !== undefined) dropIdx[x.bi] = 1; }
+    });
+    if (Object.keys(dropT).length)
+      dropBest = poolFor().filter(function (x) { return (P.skipJunk ? (x.dk ?? 0) < 0.5 : true) && x.score >= 8; })
+        .sort(function (a3, b3) { return b3.score - a3.score; }).slice(0, 12).map(function (x) { return x.id; });
+  }
   // aggressivity scales holds across the board (and eases the aggressive-section
   // threshold): 0 = everything long, 1 = the energy mapping as tuned, 2 = dense
   var ag = Math.max(0, Math.min(2, P.aggro));
@@ -1036,10 +1165,38 @@ function buildCuts(bts, en, duration) {
     var hold = Math.round(1 + f * (P.holdMax - 1));
     if (ag < 1) hold = Math.round(hold * (1 + (1 - ag) * 0.8));      // pull toward long holds
     else if (ag > 1) hold = Math.max(1, Math.round(hold / (1 + (ag - 1) * 1.5))); // pull toward every beat
-    if (i + hold >= bts.length) i = bts.length;
-    else i += hold;
+    if (P.mood) {
+      // intensity-coupled holds: chill lingers, loud speeds up, builds accelerate
+      // into the drop, and the drop opener holds its most interesting clip long
+      var siH = secIdxAt(bts[i]);
+      if (siH >= 0) {
+        var secH = secs[siH];
+        var endH = siH + 1 < secs.length ? secs[siH + 1].s : duration;
+        if (secH.kind === 'chill') hold = Math.min(P.holdMax, Math.round(hold * 1.35));
+        else if (secH.kind === 'loud') hold = Math.max(1, Math.round(hold * 0.6));
+        else if (secH.kind === 'build') {
+          var pos3 = Math.max(0, Math.min(1, (bts[i] - secH.s) / Math.max(0.05, endH - secH.s)));
+          hold = Math.max(1, Math.round(hold * (1.7 - 1.5 * pos3))); // accelerate toward the drop
+        } else if (secH.kind === 'drop') {
+          var nxt2 = (bts[i + 1] !== undefined ? bts[i + 1] - bts[i] : 0.5);
+          // the drop is the statement moment: it may hold up to twice holdMax
+          hold = Math.max(hold, Math.min(P.holdMax * 2, Math.round((endH - bts[i]) / Math.max(0.05, nxt2))));
+        }
+      }
+    }
+    var dropHere = dropT[bts[i]] === 1 && dropBest.length;
+    cutPick2.push(dropHere ? dropBest[dropRank++ % dropBest.length] : -1);
+    // land the walk exactly on the next drop's opening beat (hold steps skip it otherwise)
+    var i2 = i + hold >= bts.length ? bts.length : i + hold;
+    if (Object.keys(dropIdx).length) {
+      var dbest = Infinity;
+      for (var k4 in dropIdx) { var b4 = +k4; if (b4 > i && b4 < i2 && b4 < dbest) dbest = b4; }
+      if (dbest !== Infinity) i2 = dbest;
+    }
+    if (i2 >= bts.length) i = bts.length;
+    else i = i2;
   }
-  if (!cuts.length) cuts.push(0);
+  if (!cuts.length) { cuts.push(0); cutPick2.push(-1); }
 
   var at = {};
   (beatPattern.at || []).forEach(function (b) { at[b] = 1; });
@@ -1048,6 +1205,7 @@ function buildCuts(bts, en, duration) {
     offs = [...new Set(offs)].filter(function (o) { return o > 0.04 && o < 0.96; }).sort(function (a, b) { return a - b; });
   }
   var out = [], lastStutter = -1e9, count = 0, insTotal = 0, insMax = P.insMax || 48;
+  var insSet = {}; // inserted micro-cut times get hard cuts (except in chill sections)
   for (var k = 0; k < cuts.length; k++) {
     var t0 = cuts[k], segEnd = k + 1 < cuts.length ? cuts[k + 1] : duration;
     out.push(t0);
@@ -1064,6 +1222,7 @@ function buildCuts(bts, en, duration) {
           var pt = bts[j] + offs[q2] * (jEnd - bts[j]);
           if (pt > t0 + 0.08 && pt < segEnd - 0.08 && inserted.indexOf(pt) < 0 && insTotal < insMax) {
             inserted.push(pt);
+            insSet[pt] = 1;
             insTotal++;
           }
         }
@@ -1073,7 +1232,7 @@ function buildCuts(bts, en, duration) {
     // Run length scans the global beat list — segments are per-beat at high energy,
     // so a local scan would never see the run. No bpm cap: fast tracks need this
     // path for their density; only the taste stutter below is tempo-gated.
-    if (k + 1 < cuts.length && insTotal < insMax) {
+    if (k + 1 < cuts.length && insTotal < insMax && !dropT[t0]) {
       var b0 = ci[k], b1 = ci[k + 1];
       for (var jg = b0; jg < b1 && insTotal < insMax; jg++) {
         if (!((en.length === bts.length ? en[jg] : 0.5) >= hiTh)) continue;
@@ -1086,16 +1245,16 @@ function buildCuts(bts, en, duration) {
         var of2 = runLen >= P.aggrQuarterRun ? [0.25, 0.5, 0.75] : runLen >= P.aggrHalfRun ? [0.5] : [];
         for (var og = 0; og < of2.length; og++) {
           var pt2 = bts[jg] + of2[og] * int2;
-          if (pt2 > t0 + 0.08 && pt2 < segEnd - 0.08 && inserted.indexOf(pt2) < 0) { inserted.push(pt2); insTotal++; }
+          if (pt2 > t0 + 0.08 && pt2 < segEnd - 0.08 && inserted.indexOf(pt2) < 0) { inserted.push(pt2); insSet[pt2] = 1; insTotal++; }
         }
       }
     }
     // otherwise taste split on slow→loud ramps and strong accents
-    if (!inserted.length && k + 1 < cuts.length) {
+    if (!inserted.length && k + 1 < cuts.length && !dropT[t0]) {
       var gap = segEnd - t0;
       if (P.stutter && bpm < P.stutterMaxBpm && gap >= P.stutterMinHold && count < P.stutterMax &&
           segEnd - lastStutter > P.stutterGap && (ce[k + 1] - ce[k] >= P.stutterRamp || ce[k + 1] >= P.stutterAccent)) {
-        for (var q3 = 1; q3 < P.split; q3++) inserted.push(t0 + gap * q3 / P.split);
+        for (var q3 = 1; q3 < P.split; q3++) { var pst = t0 + gap * q3 / P.split; inserted.push(pst); insSet[pst] = 1; }
         lastStutter = segEnd;
         count++;
       }
@@ -1112,6 +1271,16 @@ function buildCuts(bts, en, duration) {
     inserted = dedup;
     out = out.concat(inserted);
   }
+  // per-cut crossfade (mood-driven): drops/loud = hard instant cuts, chill = long soft
+  // dissolves, build = shorter than base; inserted micro-cuts are hard except in chill.
+  cutPick = cutPick2;
+  cutFades = out.map(function (t) {
+    if (P.mood && secIdxAt(t) >= 0 && secs[secIdxAt(t)].kind === 'chill')
+      return Math.min(400, Math.max(150, Math.round(P.fadeMs * 2.5)));
+    if (!P.mood) return P.fadeMs;
+    if (insSet[t]) return 0;
+    return fadeFor(t);
+  });
   return out;
 }
 
@@ -1124,14 +1293,13 @@ function enterStage() {
   audio = new Audio(startUrl);
   audio.addEventListener('ended', exitStage);
   audio.addEventListener('loadedmetadata', function () {
-    cuts = tl ? tlCuts()
-      : beats && beats.length > 1
-      ? buildCuts(beats, energy, audio.duration)
-      : fallbackGrid(audio.duration);
+    if (tl) { cuts = tlCuts(); cutFades = cuts.map(function () { return P.fadeMs; }); }
+    else if (beats && beats.length > 1) cuts = buildCuts(beats, energy, audio.duration);
+    else cuts = fallbackGrid(audio.duration);
     if (!beats || beats.length <= 1)
       $('summary').textContent = 'no beats detected — cutting every 0.5 s';
     else
-      $('summary').textContent = (bpm ? bpm + ' bpm, ' : '') + beats.length + ' beats, ' + cuts.length + ' cuts';
+      $('summary').textContent = (bpm ? bpm + ' bpm, ' : '') + beats.length + ' beats, ' + cuts.length + ' cuts' + (P.mood && moodData.sections.length ? ', ' + moodData.mood : '');
     cutIdx = 0; visible = 0; currentId = -1; waitingSwap = false; orderPos = -1;
     reseed();
     // Wait for the first clip's frame before starting the song, so the show never opens on black.
@@ -1173,6 +1341,7 @@ function materializeTl() {
   if (cc.length < 2) return null;
   var base = poolFor().slice().sort(chronoCmp);
   if (!base.length) base = vids.slice().sort(chronoCmp);
+  if (P.shuffle) shuffleFor(base); // breaks chronology on purpose; fixed seed keeps the run reproducible
   var segs = cc.map(function (t, i) {
     return { id: -1, s: 0, len: Math.max(TL_MIN, (cc[i + 1] !== undefined ? cc[i + 1] : dur) - t) };
   });
@@ -1274,6 +1443,19 @@ $('eSeek').addEventListener('click', function () {
   tlEdits++; renderTl();
 });
 $('eRefit').addEventListener('click', function () { tl = materializeTl(); tlSel = -1; tlEdits = 0; renderTl(); });
+// Reshuffle: regenerate the whole edit under a different seed — new in-points and
+// new junk-rolls everywhere, segment structure (cut times) untouched. Same song +
+// same seed still reproduces exactly this edit later.
+$('eShuffle').addEventListener('click', function () {
+  if (!tl) return;
+  if (P.seed) P.seed = (P.seed % 99999) + 1; // seeded mode: walk forward; seed 0 stays on shuffle
+  $('p_seed').value = String(P.seed);
+  saveP();
+  reseed();
+  tl = materializeTl();
+  tlSel = -1; tlEdits = 0;
+  renderTl();
+});
 $('eDone').addEventListener('click', function () { $('edit').hidden = true; $('form').hidden = false; });
 
 // ---- Editor entry: probe the song, materialize (or keep) the edited timeline ----
@@ -1286,7 +1468,7 @@ function buildEdit() {
     audio.addEventListener('ended', exitStage);
   }
   var go = function () {
-    if (!tl) { tl = materializeTl(); tlEdits = 0; tlSel = -1; }
+    if (!tl) { reseed(); tl = materializeTl(); tlEdits = 0; tlSel = -1; }
     if (!tl) { $('estats').textContent = 'not enough material to build a timeline'; return; }
     renderTl();
   };
@@ -1442,7 +1624,24 @@ function loop() {
 var pending = null;
 var cutSeq = 0; // increments per cut: stale abandoned loaders must not swap
 var darkSince = 0, lastReactive = 0;
-var orderPos = -1; // walk position through the chronologically sorted pool
+var orderPos = -1; // walk position through the sorted (or shuffled) pool
+// Indie transitions applied to the incoming clip (colour-mix / crush / punch / ...),
+// animated back to identity over the crossfade. Picked along the seeded stream.
+var FXS = [
+  { f: 'hue-rotate(130deg) saturate(2.4) contrast(1.5)', t: 'none' },        // colour mix
+  { f: 'contrast(2.2) saturate(0.2) brightness(1.3)', t: 'none' },          // bitcrush look
+  { f: 'blur(16px) saturate(1.7)', t: 'none' },                              // dream blur
+  { f: 'none', t: 'scale(1.45)' },                                           // punch-in
+  { f: 'none', t: 'translateX(36px)' },                                      // slide
+  { f: 'invert(1) hue-rotate(160deg) saturate(2)', t: 'none' },              // negative flash
+];
+function shuffleFor(arr) { // Fisher-Yates on the edit's RNG stream: fixed seed ⇒ same shuffle
+  for (var i = arr.length - 1; i > 0; i--) {
+    var j = Math.floor((RNG ? RNG() : Math.random()) * (i + 1));
+    var t = arr[i]; arr[i] = arr[j]; arr[j] = t;
+  }
+  return arr;
+}
 
 // ---- Edit seed: 0 = Math.random for every seek; a fixed seed reproduces the exact
 // same edit for the same song (clip walk, cut times and seek stream are all
@@ -1567,14 +1766,23 @@ function loadClip(el, idx) {
     }
     var base = poolFor().slice().sort(chronoCmp);
     if (!base.length) base = vids.slice().sort(chronoCmp);
-    var v;
-    for (var tr = 0; tr < 3; tr++) {
-      orderPos = (orderPos + 1) % base.length;
-      v = base[orderPos];
-      // a still-loading clip re-rolled onto itself would restart the load for ever
-      if (!(el.readyState < 2 && el.dataset.clip === String(v.id))) break;
+    if (P.shuffle) shuffleFor(base); // RNG stream: fixed seed → same shuffle every time
+    // drop opener: this cut is scheduled to show the drop's best clip; first
+    // attempt only (re-rolls fall back to the walk so a dark pick never sticks)
+    var v, proxy;
+    var pick = idx !== undefined && !attempts && (cutPick[idx] ?? -1) >= 0 ? cutPick[idx] : -1;
+    if (pick >= 0 && vids[pick] && (!P.skipJunk || (vids[pick].dk ?? 0) < 0.5)) {
+      v = vids[pick];
+      proxy = P.useLrf && v.lrfDur; // orderPos parked: the chronology resumes after the drop
+    } else {
+      for (var tr = 0; tr < 3; tr++) {
+        orderPos = (orderPos + 1) % base.length;
+        v = base[orderPos];
+        // a still-loading clip re-rolled onto itself would restart the load for ever
+        if (!(el.readyState < 2 && el.dataset.clip === String(v.id))) break;
+      }
+      proxy = P.useLrf && v.lrfDur;
     }
-    var proxy = P.useLrf && v.lrfDur;
     st.id = v.id;
     st.dur = proxy ? v.lrfDur : v.duration; // seek bounds must match the served file
     st.s = (RNG ? RNG() : Math.random()) * Math.max(0, st.dur - L - 0.1);
@@ -1636,8 +1844,24 @@ function cut(idx, startAudio) {
     visible = 1 - visible;
     currentId = st.id;
     showing.style.opacity = '0';
-    next.style.opacity = '1';
+    showCtl();
+    var fades = (cutFades[idx] !== undefined ? cutFades[idx] : P.fadeMs);
+    // Indie transition: the incoming clip appears already-affected and eases back
+    // to identity as it fades in. The FX must be committed statically while the
+    // element is still invisible — transitioned changes animate from the element's
+    // previous computed value (none), not the newly assigned one, so otherwise the
+    // browser animates none→fx→none in two frames at ~0 opacity: invisible.
+    var fx = P.fancy ? FXS[Math.floor((RNG ? RNG() : Math.random()) * FXS.length)] : null;
+    next.style.transition = 'none';
+    next.style.opacity = '0';
+    next.style.filter = fx ? fx.f : 'none';
+    next.style.transform = fx ? fx.t : 'none';
+    void next.offsetWidth; // flush: make the FX state the transition origin
+    var fxDur = fades > 0 ? fades : 180; // hard cuts still flash the effect
     next.dataset.swapAt = String(Date.now());
+    next.style.transition = 'opacity ' + fades + 'ms linear' + (fx ? ', filter ' + fxDur + 'ms ease-out, transform ' + fxDur + 'ms ease-out' : '');
+    next.style.opacity = '1';
+    if (fx) { next.style.filter = 'none'; next.style.transform = 'none'; }
     if (startAudio) audio.play().catch(function () {}); // audio starts on the first visible frame
     // once faded out, pause the old clip and preload the beat after this one into it
     setTimeout(function () {
