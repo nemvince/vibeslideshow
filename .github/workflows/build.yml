@@ -226,9 +226,11 @@ jobs:
           set -e
           bundle="$(echo dist/vibeslideshow-*-windows-x86_64)"
           echo "== bundle: $bundle"
+          # Absolute: PATH is stripped below so only the bundle can supply DLLs.
+          TIMEOUT="$(command -v timeout)"
           ( cd "$bundle" && env PATH="$(cygpath -w "$PWD")" ./vibeslideshow.exe --version )
           set +e
-          ( cd "$bundle" && env PATH="$(cygpath -w "$PWD")" timeout 10 ./vibeslideshow.exe > bundle.log 2>&1 )
+          ( cd "$bundle" && env PATH="$(cygpath -w "$PWD")" "$TIMEOUT" 10 ./vibeslideshow.exe > bundle.log 2>&1 )
           code=$?
           set -e
           if [ "$code" -eq 124 ]; then echo "bundle stayed up: ok"; else
