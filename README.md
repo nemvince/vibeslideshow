@@ -45,7 +45,7 @@ cmake --install build --prefix ~/.local
 |---|---|---|
 | Linux | `vibeslideshow-<ver>-linux-<arch>.tar.gz`, plus `.deb` when `dpkg-deb` exists | Qt ≥ 6.5, libmpv, ffmpeg |
 | macOS | `vibeslideshow-<ver>-macos.zip` and `.dmg` (Qt + libmpv inside the `.app`) | `brew install qt mpv ffmpeg dylibbundler` |
-| Windows | `vibeslideshow-<ver>-windows-x86_64.zip` (Qt, libmpv, ffmpeg inside) | MSYS2 MINGW64 shell with `qt6-base qt6-declarative mpv ffmpeg` |
+| Windows | `vibeslideshow-<ver>-windows-x86_64.zip` (Qt, libmpv, ffmpeg inside) | MSYS2 UCRT64 shell with `qt6-base qt6-declarative mpv ffmpeg` |
 
 `--no-build` packages an existing `./build`. The platform scripts are
 `scripts/package-{linux,macos,windows}.sh` and can be run directly.
@@ -160,4 +160,5 @@ tag is pushed:
 - **linux** — Ubuntu 24.04, Qt from `install-qt-action` (the distro still ships
   6.4), `libmpv-dev` from apt, headless start-up smoke test, tarball + `.deb`
 - **macos** — `macos-14`, Homebrew Qt/mpv/ffmpeg, `macdeployqt` bundle, zip + dmg
-- **windows** — MSYS2 MINGW64 with Qt 6, libmpv and ffmpeg, `windeployqt` bundle, zip
+- **windows** — MSYS2 **UCRT64** (the environment mpv is still built for) with Qt 6,
+  libmpv and ffmpeg, `windeployqt` bundle, zip

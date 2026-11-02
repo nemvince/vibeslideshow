@@ -45,9 +45,6 @@ jobs:
           echo "Qt: $(command -v qmake6 || command -v qmake || echo none)"
           pkg-config --modversion mpv
 
-      - name: Optional Qt modules
-        run: pacman -S --needed --noconfirm mingw-w64-x86_64-qt6-quickcontrols2 || true
-
       - name: Build
         run: bash scripts/build.sh --release
 
@@ -90,18 +87,30 @@ jobs:
       - name: Install dependencies
         run: |
           brew untap aws/tap || true
-          brew install qt mpv ffmpeg dylibbundler cmake ninja
+          brew install qt mpv ffmpeg cmake ninja
+          # Optional: rewrites the ffmpeg binaries' dylib paths. The packaging
+          # script only warns when it is missing, so a formula hiccup must not
+          # fail the job.
+          brew install dylibbundler || true
 
       - name: Build
         run: |
-          export CMAKE_PREFIX_PATH="$(brew --prefix qt)"
+          # Both prefixes: Qt comes from the qt formula, libmpv + its mpv.pc from
+          # the Homebrew prefix itself. Without the second one, pkg-config and
+          # find_path never see libmpv and configure fails.
+          export CMAKE_PREFIX_PATH="$(brew --prefix qt);$(brew --prefix)"
+          export PKG_CONFIG_PATH="$(brew --prefix)/lib/pkgconfig:$(brew --prefix qt)/lib/pkgconfig"
+          pkg-config --modversion mpv
           bash scripts/build.sh --release
 
       - name: Smoke test
         run: |
           set -e
-          BIN="$(find build -type f -name vibeslideshow -perm -u+x | head -1)"
-          [ -n "$BIN" ] || { echo "no vibeslideshow binary in build/"; exit 1; }
+          BIN=""
+          for cand in build/vibeslideshow.app/Contents/MacOS/vibeslideshow build/vibeslideshow; do
+            if [ -x "$cand" ]; then BIN="$cand"; break; fi
+          done
+          [ -n "$BIN" ] || { echo "no vibeslideshow binary in build/"; ls -R build | head -40; exit 1; }
           echo "binary: $BIN"
           "$BIN" --version
           "$BIN" > /tmp/app.log 2>&1 &
@@ -138,19 +147,20 @@ jobs:
 
       - uses: msys2/setup-msys2@v2
         with:
-          msystem: MINGW64
+          # UCRT64, not the legacy MINGW64: MSYS2 no longer builds mpv (the only
+          # source of libmpv on Windows) for mingw64.
+          msystem: UCRT64
           install: >-
             git
-            mingw-w64-x86_64-toolchain
-            mingw-w64-x86_64-cmake
-            mingw-w64-x86_64-ninja
-            mingw-w64-x86_64-pkgconf
-            mingw-w64-x86_64-qt6-base
-            mingw-w64-x86_64-qt6-declarative
-            mingw-w64-x86_64-mpv
-            mingw-w64-x86_64-ffmpeg
+            mingw-w64-ucrt-x86_64-toolchain
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-ninja
+            mingw-w64-ucrt-x86_64-pkgconf
+            mingw-w64-ucrt-x86_64-qt6-base
+            mingw-w64-ucrt-x86_64-qt6-declarative
+            mingw-w64-ucrt-x86_64-mpv
+            mingw-w64-ucrt-x86_64-ffmpeg
             zip
-            7zip
 
       - name: Build
         run: bash scripts/build.sh --release

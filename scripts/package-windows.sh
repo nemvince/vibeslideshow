@@ -18,7 +18,9 @@ done
 VERSION="$(sed -n 's/^ *VERSION \([0-9][0-9.]*\).*/\1/p' CMakeLists.txt | head -1)"
 [ -n "$VERSION" ] || { echo "package-windows: cannot read VERSION from CMakeLists.txt" >&2; exit 1; }
 NAME="vibeslideshow-$VERSION-windows-x86_64"
-MINGW_PREFIX="${MINGW_PREFIX:-/mingw64}"
+# UCRT64 is the environment MSYS2 still builds mpv for; MINGW_PREFIX is set by the
+# msys2 shell, this is only the fallback.
+MINGW_PREFIX="${MINGW_PREFIX:-/ucrt64}"
 
 [ "$SKIP_BUILD" = 1 ] || bash ./scripts/build.sh --dir "$BUILD_DIR" --release
 
