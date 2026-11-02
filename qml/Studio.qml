@@ -226,15 +226,19 @@ ApplicationWindow {
 
                 Rectangle { Layout.preferredWidth: 1; implicitHeight: 18; color: Theme.line; Layout.leftMargin: 2; Layout.rightMargin: 2 }
 
-                // Edit actions, in the order you reach for them. All of them need a
-                // settled library: a rescan renumbers clip ids under the edit.
-                IconButton { glyph: "\u2212"; tip: "Shorten"; enabled: studio.workspaceEnabled && timeline.selected >= 0; onClicked: timeline.shorten() }
-                IconButton { glyph: "+"; tip: "Lengthen"; enabled: studio.workspaceEnabled && timeline.selected >= 0; onClicked: timeline.lengthen() }
-                IconButton { glyph: "\u2702"; tip: "Chop in half"; enabled: studio.workspaceEnabled && timeline.selected >= 0; onClicked: timeline.chop() }
-                IconButton { glyph: "\u25CE"; tip: "New in-point"; enabled: studio.workspaceEnabled && timeline.selected >= 0; onClicked: timeline.rerollIn() }
-                IconButton { glyph: "\u21C4"; tip: "Swap clip"; enabled: studio.workspaceEnabled && timeline.selected >= 0; onClicked: timeline.swap() }
-                IconButton { glyph: "\u2715"; tip: "Delete segment"; enabled: studio.workspaceEnabled && timeline.selected >= 0; onClicked: timeline.remove() }
-                IconButton { glyph: "\u27F3"; tip: "Re-roll every in-point"; enabled: studio.workspaceEnabled && timeline.count > 0; onClicked: timeline.rerollAll() }
+                // Edit actions come from the command table, so the menu, these
+                // buttons and the keys cannot disagree about what exists. They all
+                // need a settled library: a rescan renumbers clip ids under the edit.
+                Repeater {
+                    model: timeline.commands.filter(function(c) { return c.bar })
+                    delegate: IconButton {
+                        required property var modelData
+                        glyph: modelData.glyph
+                        tip: modelData.label + (modelData.keys.length ? "  ·  " + modelData.keys : "")
+                        enabled: studio.workspaceEnabled && root.canUse(modelData.needs)
+                        onClicked: timeline.runCommand(modelData.id)
+                    }
+                }
 
                 Text {
                     text: timeline.selected >= 0 ? timeline.selectionInfo : timeline.stats
@@ -506,6 +510,13 @@ ApplicationWindow {
         return !!f && (f instanceof TextInput || f instanceof TextField || f instanceof TextArea)
     }
 
+    // What a command needs before it applies, as declared by its `needs` field.
+    function canUse(needs) {
+        if (needs === "selection") return timeline.selected >= 0
+        if (needs === "timeline") return timeline.count > 0
+        return true
+    }
+
     Shortcut {
         sequence: "Space"
         enabled: !root.typingText && studio.workspaceEnabled && studio.songAnalysed
@@ -533,4 +544,15 @@ ApplicationWindow {
         sequence: "Escape"
         onActivated: studio.stopShow()
     }
+
+    // Clip operations. The sequence text lives in the command table; these only
+    // bind it to a window shortcut. Every one of those operations no-ops without a
+    // selection, so there is nothing to enable or disable here beyond typing.
+    Shortcut { sequence: timeline.commandKey("shorten");   enabled: !root.typingText; onActivated: timeline.runCommand("shorten") }
+    Shortcut { sequence: timeline.commandKey("lengthen");  enabled: !root.typingText; onActivated: timeline.runCommand("lengthen") }
+    Shortcut { sequence: timeline.commandKey("chop");      enabled: !root.typingText; onActivated: timeline.runCommand("chop") }
+    Shortcut { sequence: timeline.commandKey("rerollIn");  enabled: !root.typingText; onActivated: timeline.runCommand("rerollIn") }
+    Shortcut { sequence: timeline.commandKey("swap");      enabled: !root.typingText; onActivated: timeline.runCommand("swap") }
+    Shortcut { sequence: timeline.commandKey("remove");    enabled: !root.typingText; onActivated: timeline.runCommand("remove") }
+    Shortcut { sequence: timeline.commandKey("rerollAll"); enabled: !root.typingText; onActivated: timeline.runCommand("rerollAll") }
 }

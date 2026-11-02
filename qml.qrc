@@ -15,6 +15,7 @@
         <file>qml/ProgressLine.qml</file>
         <file>qml/IconButton.qml</file>
         <file>qml/Timeline.qml</file>
+        <file>qml/ClipMenu.qml</file>
         <file>qml/ToggleSwitch.qml</file>
         <file>qml/Segmented.qml</file>
         <file>qml/SwitchRow.qml</file>

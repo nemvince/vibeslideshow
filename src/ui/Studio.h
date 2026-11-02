@@ -157,6 +157,11 @@ private:
     void setSongBusy(bool b);
     void syncScheduler();
     void persist();
+    // Set the named look in use. It feeds two things the QML sees — the picker's
+    // rows (their `active` flag lives in looks()) and the activePreset property —
+    // so both signals come from here. Setting one without the other is exactly
+    // how the picker's label fell out of step with the look that was applied.
+    void setActiveLook(const QString &preset, const QString &profile);
     void refreshProfiles();
     void restoreSession();
     void writeProfiles();

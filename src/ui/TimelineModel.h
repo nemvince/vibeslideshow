@@ -1,5 +1,6 @@
 #pragma once
 #include <QAbstractListModel>
+#include <QVariantList>
 #include "core/Types.h"
 #include "core/Params.h"
 
@@ -21,6 +22,17 @@ class TimelineModel : public QAbstractListModel {
     // Length the edit was cut to. The player's duration can still be unknown while
     // mpv opens the file; layout must not depend on it.
     Q_PROPERTY(double songDuration READ songDuration NOTIFY songDurationChanged)
+    // Every clip operation, described once. The transport toolbar, the right-click
+    // menu and the keyboard all read this table, so an operation is added here (and
+    // in runCommand) and shows up in all three. Fields:
+    //   id     stable name used by runCommand()/commandKey()
+    //   label  what the menu says, in the panel's plain voice
+    //   glyph  the icon, in the same unicode set IconButton already uses
+    //   keys   QKeySequence portable text; "" means no shortcut
+    //   group  "timing" | "clip" | "destructive" | "all"; a group change draws a separator
+    //   bar    show it in the transport toolbar
+    //   needs  "selection" | "timeline" — what has to exist for it to apply
+    Q_PROPERTY(QVariantList commands READ commands CONSTANT)
 public:
     enum Roles {
         SegIdRole = Qt::UserRole + 1, SegStartRole, SegLenRole, SegInRole,
@@ -72,6 +84,10 @@ public:
     Q_INVOKABLE void replaceSegment(int row, int clipId, double inPoint);
     Q_INVOKABLE void rerollAll();
     Q_INVOKABLE QString thumbForSegment(int index) const;
+
+    QVariantList commands() const;
+    Q_INVOKABLE QString commandKey(const QString &id) const;
+    Q_INVOKABLE void runCommand(const QString &id);
 
 signals:
     void countChanged();

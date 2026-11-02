@@ -4,6 +4,7 @@
 #include "core/Library.h"
 
 #include <QFileInfo>
+#include <algorithm>
 #include <cmath>
 
 namespace {
@@ -38,15 +39,96 @@ Show::Show(QObject *parent) : QObject(parent) {
     m_tick.setInterval(25);
     m_tick.setTimerType(Qt::PreciseTimer);
     connect(&m_tick, &QTimer::timeout, this, &Show::tick);
+    m_fillLater.setSingleShot(true);
+    connect(&m_fillLater, &QTimer::timeout, this, &Show::fillLookahead);
 }
 
 Show::~Show() {
     if (m_audio) mpv_terminate_destroy(m_audio);
 }
 
-void Show::attachSurfaces(QObject *a, QObject *b) {
-    m_a = qobject_cast<MpvItem *>(a);
-    m_b = qobject_cast<MpvItem *>(b);
+void Show::attachSurfaces(const QVariantList &surfaces) {
+    m_surfs.clear();
+    m_holdSeg.clear();
+    m_holdAt.clear();
+    for (const QVariant &v : surfaces) {
+        auto *item = qobject_cast<MpvItem *>(v.value<QObject *>());
+        if (!item) continue;
+        m_surfs << item;
+        m_holdSeg << -1;
+        m_holdClip << -1;
+        m_holdAt << -1.0;
+    }
+    m_frontIdx = m_surfs.isEmpty() ? -1 : 0;
+    m_outgoingIdx = -1;
+    if (auto *f = frontSurface()) f->setPaused(true);
+}
+
+MpvItem *Show::frontSurface() const {
+    return (m_frontIdx >= 0 && m_frontIdx < m_surfs.size()) ? m_surfs[m_frontIdx] : nullptr;
+}
+
+int Show::segmentAt(double songTime) const {
+    if (m_segs.isEmpty()) return -1;
+    int idx = 0;
+    for (int i = 0; i < m_cuts.size(); i++)
+        if (m_cuts[i] <= songTime + 1e-6) idx = i;
+    return std::min(idx, int(m_segs.size()) - 1);
+}
+
+double Show::targetFor(int idx, double songTime) const {
+    if (idx < 0 || idx >= m_segs.size()) return 0;
+    double clipDur = 0;
+    pathFor(m_segs[idx], &clipDur);
+    // Offset into the clip: zero at a cut, more when landing mid-shot.
+    const double into = (idx < m_cuts.size()) ? std::max(0.0, songTime - m_cuts[idx]) : 0.0;
+    return std::min(m_segs[idx].s + into, std::max(0.0, clipDur - 0.05));
+}
+
+double Show::warmReadahead(int idx) const {
+    if (idx < 0 || idx >= m_segs.size()) return 2.0;
+    const double len = (idx + 1 < m_cuts.size()) ? m_cuts[idx + 1] - m_cuts[idx] : m_segs[idx].len;
+    // The shot plus a margin, nothing more: four surfaces each asking mpv for a
+    // full readahead would hold several minutes of footage in memory at once.
+    return std::clamp(len + 1.5, 2.0, 20.0);
+}
+
+void Show::loadInto(int surf, int segIdx, double clipTime, double readaheadSecs) {
+    if (surf < 0 || surf >= m_surfs.size() || segIdx < 0 || segIdx >= m_segs.size()) return;
+    const QString path = pathFor(m_segs[segIdx], nullptr);
+    if (path.isEmpty()) return;
+    m_surfs[surf]->loadAndSeek(path, clipTime, readaheadSecs);
+    m_surfs[surf]->setPaused(true);
+    m_holdSeg[surf] = segIdx;
+    m_holdClip[surf] = m_segs[segIdx].id;
+    m_holdAt[surf] = clipTime;
+}
+
+int Show::surfaceHolding(int idx, double clipTime, double tolerance) const {
+    if (idx < 0 || idx >= m_segs.size()) return -1;
+    for (int s = 0; s < m_surfs.size(); s++) {
+        if (m_holdSeg[s] != idx) continue;
+        if (m_holdClip[s] != m_segs[idx].id) continue;
+        if (std::fabs(m_holdAt[s] - clipTime) > tolerance) continue;
+        return s;
+    }
+    return -1;
+}
+
+int Show::spareSurface() const {
+    if (m_surfs.isEmpty()) return -1;
+    // A surface still fading out is on screen: loading into it would show the
+    // next shot through the fade.
+    const bool fading = m_outgoingIdx >= 0 && m_sinceCut.isValid() &&
+                        m_sinceCut.elapsed() < m_lastFadeMs + 60;
+    int fallback = -1;
+    for (int s = 0; s < m_surfs.size(); s++) {
+        if (s == m_frontIdx) continue;
+        if (s == m_outgoingIdx && fading) continue;
+        if (m_holdSeg[s] < 0) return s;   // already empty: use it and touch nothing
+        if (fallback < 0) fallback = s;
+    }
+    return fallback;
 }
 
 void Show::emitReadyChanged() { emit readyChanged(); }
@@ -58,13 +140,109 @@ void Show::setEdit(const QList<TlSeg> &segs, const QList<double> &cuts, const QL
     m_segs = segs;
     m_cuts = cuts;
     m_fades = fades;
-    m_cutIdx = 0;
-    m_preloaded = -1;
-    m_preloadPending = -1;
-    m_currentClip = -1;
     emit segmentsChanged();
-    emit currentClipChanged();
     emitReadyChanged();
+    // The picture follows the edit at once. Without this the stage keeps the frame
+    // it was holding until something else seeks, so a swap or a chop looks like it
+    // did nothing until you touch the strip.
+    refreshPreview();
+}
+
+void Show::refreshPreview() {
+    if (m_surfs.isEmpty()) return;
+    // No edit left: let go of the picture rather than leaving the last clip of a
+    // deleted folder on the stage.
+    if (m_segs.isEmpty() || m_cuts.isEmpty()) {
+        releaseSurfaces();
+        m_currentClip = -1;
+        m_cutIdx = 0;
+        emit currentClipChanged();
+        emit cutIndexChanged();
+        return;
+    }
+
+    const int idx = segmentAt(m_pos);
+    const double target = targetFor(idx, m_pos);
+    // The shot on screen is the one the playhead is over, at the same frame: an
+    // edit somewhere else in the strip must not re-open and re-seek this picture
+    // (on a network share that is a visible stall for no change).
+    if (surfaceHolding(idx, target, 1e-6) == m_frontIdx && m_currentClip == m_segs[idx].id) {
+        fillLookahead();
+        return;
+    }
+
+    // Replace the picture where it is, on the surface that is already on screen:
+    // there is nothing to fade from, because the old shot is gone from the edit.
+    if (m_frontIdx < 0) m_frontIdx = 0;
+    if (m_frontIdx >= m_surfs.size()) m_frontIdx = m_surfs.size() - 1;
+    loadInto(m_frontIdx, idx, target, -1);
+    m_outgoingIdx = -1;   // replaced in place: not a cut, so nothing is fading out
+    for (int s = 0; s < m_surfs.size(); s++)
+        if (s != m_frontIdx) m_surfs[s]->setPaused(true);
+    m_cutIdx = idx;
+    m_currentClip = m_segs[idx].id;
+    m_lastFadeMs = (idx < m_fades.size()) ? m_fades[idx] : 120;
+    emit currentClipChanged();
+    emit cutIndexChanged();
+    m_sinceCut.restart();
+    m_lastFrameTs = -1;
+    m_seekStreak = 0;
+    m_sinceFrameAdvance.restart();
+    fillLookahead();
+}
+
+void Show::fillLookahead() {
+    if (m_surfs.isEmpty() || m_segs.isEmpty() || m_cuts.isEmpty() || m_frontIdx < 0) return;
+    const int n = m_surfs.size();
+    if (n < 2) return;
+    // A link that cannot feed the shot on screen must not be asked for three more.
+    if (m_buffering) return;
+    const bool fading = m_outgoingIdx >= 0 && m_sinceCut.isValid() &&
+                        m_sinceCut.elapsed() < m_lastFadeMs + 60;
+
+    // The shots the next cuts will want, nearest first: one per spare surface.
+    QList<int> want;
+    for (int k = 1; k < n && m_cutIdx + k < m_segs.size(); k++) want << m_cutIdx + k;
+
+    // A surface is spoken for while it holds one of those shots, at its cut frame.
+    auto reserved = [&](int s) {
+        for (int w : want)
+            if (surfaceHolding(w, targetFor(w, m_cuts[w]), 1e-6) == s) return true;
+        return false;
+    };
+    bool blocked = false;
+    for (int idx : want) {
+        const double target = targetFor(idx, m_cuts[idx]);
+        if (surfaceHolding(idx, target, 1e-6) >= 0) continue;   // already warm
+        // Any surface that is not on screen, not fading out, and not holding a
+        // shot still needed; an empty one first, so a warm shot is never reused.
+        int victim = -1;
+        for (int pass = 0; pass < 2 && victim < 0; pass++) {
+            for (int s = 0; s < n; s++) {
+                if (s == m_frontIdx) continue;
+                if (s == m_outgoingIdx && fading) continue;
+                if (reserved(s)) continue;
+                if (pass == 0 && m_holdSeg[s] >= 0) continue;   // first pass: empty ones only
+                victim = s;
+                break;
+            }
+        }
+        if (victim < 0) { blocked = true; break; }
+        loadInto(victim, idx, target, warmReadahead(idx));
+    }
+    // The surface still fading out can hold one of these in a moment: come back
+    // for it rather than leaving a slot cold until the next cut.
+    if (blocked && fading && !m_fillLater.isActive()) m_fillLater.start(int(m_lastFadeMs) + 80);
+}
+
+void Show::releaseSurfaces() {
+    for (MpvItem *s : m_surfs) s->clear();
+    for (int s = 0; s < m_surfs.size(); s++) {
+        m_holdSeg[s] = -1;
+        m_holdClip[s] = -1;
+        m_holdAt[s] = -1.0;
+    }
+    m_outgoingIdx = -1;
 }
 
 QString Show::pathFor(const TlSeg &s, double *dur) const {
@@ -139,7 +317,7 @@ double Show::expectedVideoTime(int idx, double songTime) const {
 }
 
 void Show::play() {
-    if (!m_audio || !ready() || !m_a || !m_b) return;
+    if (!m_audio || !ready() || m_surfs.isEmpty()) return;
     int pause = 0;
     mpv_set_property(m_audio, "pause", MPV_FORMAT_FLAG, &pause);
     m_playing = true;
@@ -149,15 +327,24 @@ void Show::play() {
     m_sinceFrameAdvance.restart();
     emit playingChanged();
     m_tick.start();
-    if (m_currentClip < 0) {
-        // Resume from wherever the song sits: cue the covering segment.
-        int idx = 0;
-        for (int i = 0; i < m_cuts.size(); i++)
-            if (m_cuts[i] <= m_pos + 1e-6) idx = i;
+    const int idx = segmentAt(m_pos);
+    // Already open on the visible surface, and holding the clip the edit has in
+    // that shot (an edit that swapped a clip re-cues through refreshPreview).
+    const bool open = m_frontIdx >= 0 && idx >= 0 && m_holdSeg[m_frontIdx] == idx &&
+                      m_holdClip[m_frontIdx] == m_segs[idx].id;
+    if (auto *f = frontSurface(); f && open) {
+        // The shot under the playhead is already open (or about to be, if an edit
+        // just re-cued it): unpause and let the lookahead keep the rest warm.
+        const double want = targetFor(idx, m_pos);
+        if (std::fabs(m_holdAt[m_frontIdx] - want) > 0.10) {
+            f->seekExact(want);
+            m_holdAt[m_frontIdx] = want;
+        }
+        f->setPaused(false);
+        fillLookahead();
+    } else {
+        // Nothing usable on screen: cue the covering segment.
         startSegment(idx, m_pos);
-    } else if (auto *front = m_aIsFront ? m_a : m_b) {
-        front->setPaused(false);
-        maybePreload();
     }
 }
 
@@ -179,7 +366,7 @@ void Show::beginWait() {
         int one = 1;
         mpv_set_property(m_audio, "pause", MPV_FORMAT_FLAG, &one);
     }
-    if (MpvItem *front = m_aIsFront ? m_a : m_b) front->setPaused(true);
+    if (MpvItem *f = frontSurface()) f->setPaused(true);
 }
 
 void Show::resumeFromWait() {
@@ -191,7 +378,7 @@ void Show::resumeFromWait() {
         int zero = 0;
         mpv_set_property(m_audio, "pause", MPV_FORMAT_FLAG, &zero);
     }
-    if (MpvItem *front = m_aIsFront ? m_a : m_b) front->setPaused(false);
+    if (MpvItem *f = frontSurface()) f->setPaused(false);
     // Give the freshly resumed clip a moment before the drift guard touches it.
     m_sinceCut.restart();
     m_sinceCorrection.invalidate();
@@ -210,8 +397,7 @@ void Show::pause() {
     m_waiting = false;
     m_resync = false;
     setBuffering(false);
-    if (m_a) m_a->setPaused(true);
-    if (m_b) m_b->setPaused(true);
+    for (MpvItem *s : m_surfs) s->setPaused(true);
     emit playingChanged();
 }
 
@@ -225,11 +411,8 @@ void Show::stop() {
     }
     m_currentClip = -1;
     m_cutIdx = 0;
-    m_preloaded = -1;
-    m_preloadPending = -1;
     setPos(0);
-    if (m_a) m_a->clear();
-    if (m_b) m_b->clear();
+    releaseSurfaces();
     emit currentClipChanged();
     emit cutIndexChanged();
 }
@@ -242,9 +425,7 @@ void Show::seek(double t) {
     setPos(t);
     if (!ready()) return;
     // Re-cue the segment covering the new time so the picture follows the song.
-    int idx = 0;
-    for (int i = 0; i < m_cuts.size(); i++)
-        if (m_cuts[i] <= t + 1e-6) idx = i;
+    const int idx = segmentAt(t);
     const bool wasPlaying = m_playing;
     m_waiting = false;
     m_resync = false;
@@ -271,83 +452,89 @@ void Show::cueSegment(int index) {
 }
 
 void Show::startSegment(int idx, double songTime) {
-    if (!m_a || !m_b || idx < 0 || idx >= m_segs.size()) return;
-    const TlSeg &seg = m_segs[idx];
-    double clipDur = 0;
-    const QString path = pathFor(seg, &clipDur);
-    if (path.isEmpty()) return;
+    if (m_surfs.isEmpty() || idx < 0 || idx >= m_segs.size()) return;
+    if (pathFor(m_segs[idx], nullptr).isEmpty()) return;
 
-    MpvItem *back = m_aIsFront ? m_b : m_a;
-    MpvItem *front = m_aIsFront ? m_a : m_b;
+    int surf = spareSurface();
+    // One surface only, or all of them busy: replace the picture where it stands.
+    const bool inPlace = surf < 0;
+    if (inPlace) surf = m_frontIdx;
+    if (surf < 0) return;
 
-    // Offset into the clip: normally zero, non-zero when resuming mid-segment.
-    const double into = (idx < m_cuts.size()) ? std::max(0.0, songTime - m_cuts[idx]) : 0.0;
-    const double target = std::min(seg.s + into, std::max(0.0, clipDur - 0.05));
-    back->loadAndSeek(path, target);
-    back->setPaused(!m_playing);
+    // This one is about to be on screen and playing: full readahead, not a warm one.
+    loadInto(surf, idx, targetFor(idx, songTime), -1);
+    m_surfs[surf]->setPaused(!m_playing);
+    for (int s = 0; s < m_surfs.size(); s++)
+        if (s != surf) m_surfs[s]->setPaused(true);
 
-    m_aIsFront = !m_aIsFront;
+    m_outgoingIdx = inPlace ? -1 : m_frontIdx;
+    m_frontIdx = surf;
     m_cutIdx = idx;
-    m_currentClip = seg.id;
-    m_preloaded = -1;
-    m_preloadPending = idx + 1;
+    m_currentClip = m_segs[idx].id;
     m_lastFadeMs = (idx < m_fades.size()) ? m_fades[idx] : 120;
-    front->setPaused(true);
 
     emit currentClipChanged();
     emit cutIndexChanged();
-    emit crossfade(m_aIsFront, int(std::lround(m_lastFadeMs)));
+    // In place, the picture is already on the surface being written to: there is
+    // nothing to fade from, so no crossfade is asked for.
+    if (!inPlace) emit crossfade(surf, int(std::lround(m_lastFadeMs)));
     m_sinceCut.restart();
     // A new clip starts on its own buffer: reset stall tracking for it.
     m_lastFrameTs = -1;
     m_seekStreak = 0;
     m_sinceFrameAdvance.restart();
-
-    // The outgoing surface is still on screen for m_lastFadeMs. Loading into it
-    // now would show the next clip through the fade, so the preload waits.
-    maybePreload();
+    fillLookahead();
 }
 
-void Show::maybePreload() {
-    // Preloading the next clip over a link that cannot even feed the current one
-    // only makes the stall worse.
-    if (!m_playing || m_buffering) return;
-    if (m_preloadPending < 0 || m_preloaded == m_preloadPending) return;
-    if (m_sinceCut.isValid() && m_sinceCut.elapsed() < m_lastFadeMs + 60) return;
-    preloadNext(m_preloadPending);
-}
+void Show::revealSegment(int idx, double songTime) {
+    if (m_surfs.isEmpty() || idx < 0 || idx >= m_segs.size()) return;
+    // Within a quarter second counts as ready: the tick can be a frame late, and
+    // the picture is corrected in place below if it is further off than that.
+    const double want = targetFor(idx, songTime);
+    const int held = surfaceHolding(idx, want, 0.25);
+    if (held < 0) {
+        // The load did not make it in time: open it now and take the hitch.
+        startSegment(idx, songTime);
+        return;
+    }
+    if (held == m_frontIdx) {
+        // Already the shot on screen (a cut so short the tick skipped it).
+        m_cutIdx = idx;
+        m_currentClip = m_segs[idx].id;
+        m_surfs[held]->setPaused(!m_playing);
+        emit currentClipChanged();
+        emit cutIndexChanged();
+        fillLookahead();
+        return;
+    }
 
-void Show::preloadNext(int idx) {
-    if (idx < 0 || idx >= m_segs.size() || !m_a || !m_b) return;
-    const TlSeg &seg = m_segs[idx];
-    double clipDur = 0;
-    const QString path = pathFor(seg, &clipDur);
-    if (path.isEmpty()) return;
-    MpvItem *back = m_aIsFront ? m_b : m_a;
-    const double target = std::min(seg.s, std::max(0.0, clipDur - 0.05));
-    back->loadAndSeek(path, target);
-    back->setPaused(true);
-    m_preloaded = idx;
-}
+    // Warm and ready: the cut is a swap, not a file open. This is what makes a
+    // quarter-second shot land on time.
+    m_surfs[held]->setReadahead(-1);   // now it is the one playing
+    m_surfs[held]->setPaused(!m_playing);
+    if (std::fabs(m_holdAt[held] - want) > 0.10) {
+        // Open, but parked on another frame (the song moved on while it sat warm):
+        // a seek inside a file that is already open is cheap, a reload is not.
+        m_surfs[held]->seekExact(want);
+        m_holdAt[held] = want;
+    }
+    for (int s = 0; s < m_surfs.size(); s++)
+        if (s != held) m_surfs[s]->setPaused(true);
 
-void Show::revealCut(int next) {
-    MpvItem *back = m_aIsFront ? m_b : m_a;
-    MpvItem *front = m_aIsFront ? m_a : m_b;
-    back->setPaused(false);
-    m_aIsFront = !m_aIsFront;
-    m_cutIdx = next;
-    m_currentClip = m_segs[next].id;
-    m_preloaded = -1;
-    m_preloadPending = next + 1;
-    m_lastFadeMs = (next < m_fades.size()) ? m_fades[next] : 120;
-    front->setPaused(true);
+    m_outgoingIdx = m_frontIdx;
+    m_frontIdx = held;
+    m_cutIdx = idx;
+    m_currentClip = m_segs[idx].id;
+    m_lastFadeMs = (idx < m_fades.size()) ? m_fades[idx] : 120;
+
     emit currentClipChanged();
     emit cutIndexChanged();
-    emit crossfade(m_aIsFront, int(std::lround(m_lastFadeMs)));
+    emit crossfade(held, int(std::lround(m_lastFadeMs)));
     m_sinceCut.restart();
     m_lastFrameTs = -1;
     m_seekStreak = 0;
     m_sinceFrameAdvance.restart();
+    fillLookahead();
 }
 
 void Show::tick() {
@@ -355,10 +542,11 @@ void Show::tick() {
     // Pump the visible surface at the song clock's rate: under advanced control
     // mpv decodes only when render() is called, and wakeup callbacks alone are
     // not frequent enough to keep video flowing.
-    if (m_playing && m_a && m_b) (m_aIsFront ? m_a : m_b)->requestFrame();
+    if (m_playing)
+        if (MpvItem *f = frontSurface()) f->requestFrame();
     if (!m_playing || m_segs.isEmpty()) return;
 
-    MpvItem *front = m_aIsFront ? m_a : m_b;
+    MpvItem *front = frontSurface();
     if (!front) return;
 
     // ---- holding for the file -------------------------------------------
@@ -399,15 +587,13 @@ void Show::tick() {
     if (m_cutIdx + 1 < m_cuts.size() && m_pos >= m_cuts[m_cutIdx + 1]) {
         int next = m_cutIdx + 1;
         while (next + 1 < m_cuts.size() && m_pos >= m_cuts[next + 1]) next++;
-        if (m_preloaded == next) {
-            // The next clip is already resident on the back surface: just reveal it.
-            revealCut(next);
-        } else {
-            startSegment(next, m_pos);
-        }
-        front = m_aIsFront ? m_a : m_b;
+        // The shot the song has reached, from whichever surface is already holding
+        // it. Only a load that did not finish in time falls back to opening it now.
+        revealSegment(next, m_pos);
+        front = frontSurface();
     } else {
-        maybePreload();
+        // While a shot plays, keep every spare surface warm for the cuts ahead.
+        fillLookahead();
     }
 
     // Stall detection before drift correction: if the visible surface stops

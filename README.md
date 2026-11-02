@@ -104,16 +104,22 @@ the code looks next to the binary first (and honours `VIBESLIDESHOW_TOOLS_DIR`).
    where the music moves and still ones where it breathes, and a track with a
    clear pulse is cut tighter than a loose one.
 6. The strip at the bottom is the edit. Select a segment to shorten, lengthen,
-   chop, re-roll its in-point, swap its clip or delete it. Click a clip in the
+   chop, re-roll its in-point, swap its clip or delete it — from the toolbar, or
+   by right-clicking the shot itself, which selects it and opens the same list
+   with the key for each operation beside it. Click a clip in the
    rail to drop it in at the playhead. It has a zoom (**−** / **+** in the
    toolbar, or Ctrl+scroll over the strip): at 1× the whole song fits the window,
    and further in the strip scrolls — with the wheel or a sideways trackpad
-   swipe, by dragging with the right or middle button (or Shift+drag; a plain
-   drag still scrubs), or by dragging the bar along the bottom. Trackpad deltas
+   swipe, by dragging with the middle button (or Shift+drag; a plain
+   drag still scrubs), or by dragging the bar along the bottom. Right-drag is the
+   menu's, so it no longer pans. Trackpad deltas
    are honoured in either direction, so natural scrolling behaves. Segments then get
    wide enough to show a preview of the clip they hold, and its name once there is
    room. The playhead is followed while the show plays; scrolling yourself leaves
-   the view alone.
+   the view alone. Every edit lands on the stage at once: the shot the playhead is
+   over is re-cued where it stands, so a swap or a chop shows straight away
+   instead of waiting for the next scroll. Only when an edit does not change that
+   picture — shortening some other shot, say — is the surface left untouched.
 
 While any pass runs, the top bar's message slot carries what it is doing and how
 far it has got (counts, ETA, percentage), with the progress line on the top bar's
@@ -132,8 +138,10 @@ since the preview's height follows its width — and the rail and settings panel
 scale with the window instead of holding a fixed size.
 
 Space plays and pauses, arrow keys nudge ±5 s, `Ctrl+G` regenerates the edit,
-`Esc` stops. The keys stand down while a text field has focus, and while the
-workspace is locked.
+`Esc` stops. On the edit: `-` and `+` shorten and lengthen the selected shot,
+`C` chops it in two, `I` takes another moment from the same clip, `S` swaps in a
+different clip, `Delete` removes it, and `Shift+R` re-rolls every in-point. The
+keys stand down while a text field has focus, and while the workspace is locked.
 
 ## How it works
 
@@ -147,9 +155,10 @@ src/
   player/MpvItem   one video surface: QQuickFramebufferObject + mpv_render_gl
   player/Show      the edit engine: audio-master clock, preload, crossfade
   ui/ClipModel     list model over the library, filter state, thumbnails
-  ui/TimelineModel segment list model and every edit operation
+  ui/TimelineModel segment list model, the one command table, every edit operation
   ui/Studio        the single QML-facing controller; persistence
-qml/               Studio (window), LibraryRail, Stage, SidePanel + widgets
+qml/               Studio (window), LibraryRail, Stage, SidePanel, Timeline +
+                   ClipMenu, and the widgets they are built from
 ```
 
 The clock is an **audio-only third mpv instance**. A cut can never perturb the
@@ -162,9 +171,19 @@ buffered ahead (and has been re-synced with a single seek if it drifted). Seekin
 goes through the same gate, so sound and image always restart together — on a slow
 network share the show waits instead of drifting out of sync.
 
-Two video surfaces are kept. The incoming clip is loaded and paused on its first
-frame on the hidden surface once the previous crossfade is over, then revealed
-when the audio clock crosses the cut: a cut is a pre-decoded reveal, not a seek.
+Four video surfaces are kept, and the edit is buffered ahead of the playhead.
+One surface shows the current shot; the other three hold the next three shots,
+already open, seeked to their in-point and paused on a decoded frame. A cut is
+then a reveal, not a seek: the surface that already holds the shot is put on
+screen and unpaused. That is what makes short cuts work at all — a quarter-second
+shot has no time to open a file, but it has plenty of time to swap two surfaces.
+The lookahead is filled whenever the edit, the playhead or the cut changes,
+including while paused, so pressing play after a scrub starts warm.
+
+A warming surface is only asked for its own shot plus a little readahead; the
+surface that is playing gets the full one. A slot is reused only when it holds a
+shot the lookahead no longer needs, and a surface still crossfading out of view is
+never reused — the fill comes back for it once the fade is over.
 
 Threading rule: workers (folder scan, scoring, song analysis, thumbnails) only
 ever run free functions over a snapshot and hand results back with a queued

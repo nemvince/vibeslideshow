@@ -231,7 +231,7 @@ void Studio::restoreSession() {
     if (pf.open(QIODevice::ReadOnly)) {
         const QJsonObject o = QJsonDocument::fromJson(pf.readAll()).object();
         m_params.applyMap(o.value("params").toObject().toVariantMap());
-        m_activePreset = o.value("preset").toString();
+        setActiveLook(o.value("preset").toString(), QString());
         const QJsonArray dirs = o.value("dirs").toArray();
         for (const auto &d : dirs) m_dirs.append(d.toString());
         const QString song = o.value("song").toString();
@@ -241,7 +241,6 @@ void Studio::restoreSession() {
         if (!fo.isEmpty()) applyFilters(fo.toVariantMap());
         m_clips->setFilters(m_filters);
         emit paramsChanged();
-        emit activePresetChanged();
         emit filtersChanged();
     }
     if (!m_dirs.isEmpty()) {
@@ -267,6 +266,14 @@ void Studio::persist() {
 }
 
 void Studio::saveNow() { persist(); }
+
+void Studio::setActiveLook(const QString &preset, const QString &profile) {
+    if (m_activePreset == preset && m_activeProfile == profile) return;
+    m_activePreset = preset;
+    m_activeProfile = profile;
+    emit activePresetChanged();
+    emit looksChanged();
+}
 
 void Studio::refreshProfiles() {
     QFile f(configDir() + QStringLiteral("/profiles.json"));
@@ -330,13 +337,11 @@ void Studio::loadProfile(const QString &name) {
     if (!m_profiles.contains(name)) return;
     const QVariantMap entry = m_profiles.value(name).toMap();
     m_params.applyMap(entry.value("params").toMap());
-    m_activePreset = entry.value("preset").toString();
-    m_activeProfile = name;
+    setActiveLook(entry.value("preset").toString(), name);
     if (!entry.value("filters").toMap().isEmpty()) applyFilters(entry.value("filters").toMap());
     syncScheduler();
     m_clips->setFilters(m_filters);
     emit paramsChanged();
-    emit activePresetChanged();
     emit filtersChanged();
     persist();
     setStatus(QStringLiteral("Loaded look “%1”").arg(name));
@@ -347,10 +352,7 @@ void Studio::deleteProfile(const QString &name) {
     // Deleting the look in use leaves its parameters alone, but nothing is
     // "active" any more: the picker must not keep pointing at a name that no
     // longer exists.
-    if (m_activeProfile == name) {
-        m_activeProfile.clear();
-        emit activePresetChanged();
-    }
+    if (m_activeProfile == name) setActiveLook(QString(), QString());
     writeProfiles();
     refreshProfiles();
     emit looksChanged();
@@ -663,10 +665,8 @@ void Studio::applyPreset(const QString &name) {
         Params base;   // presets are sparse: they layer on the defaults
         base.applyMap(p.overrides);
         m_params = base;
-        m_activePreset = name;
-        m_activeProfile.clear();
+        setActiveLook(name, QString());
         syncScheduler();
-        emit activePresetChanged();
         emit paramsChanged();
         persist();
         setStatus(QStringLiteral("Look: %1").arg(p.blurb));
@@ -681,12 +681,7 @@ void Studio::setParam(const QString &key, const QVariant &value) {
     m[key] = value;
     m_params.applyMap(m);
     // Any hand edit detaches from the named look.
-    if (!m_activePreset.isEmpty() || !m_activeProfile.isEmpty()) {
-        m_activePreset.clear();
-        m_activeProfile.clear();
-        emit activePresetChanged();
-        emit looksChanged();
-    }
+    setActiveLook(QString(), QString());
     syncScheduler();
     emit paramsChanged();
     persist();
@@ -694,10 +689,8 @@ void Studio::setParam(const QString &key, const QVariant &value) {
 
 void Studio::restoreDefaults() {
     m_params = Params();
-    m_activePreset = QStringLiteral("Anything");
-    m_activeProfile.clear();
+    setActiveLook(QStringLiteral("Anything"), QString());
     syncScheduler();
-    emit activePresetChanged();
     emit paramsChanged();
     persist();
 }

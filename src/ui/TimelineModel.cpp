@@ -16,6 +16,33 @@ QString colorFor(int id) {
                                      QStringLiteral("#6b4b3f"), QStringLiteral("#544a6b")};
     return cols[((id % cols.size()) + cols.size()) % cols.size()];
 }
+
+struct TlCommand {
+    const char *id;
+    const char *label;
+    const char *glyph;
+    const char *keys;
+    const char *group;
+    bool bar;
+    const char *needs;
+};
+
+// The one list of clip operations. Adding an operation means adding a row here and
+// a branch in TimelineModel::runCommand(); the toolbar, the menu and the shortcut
+// all follow automatically. `keys` must not collide with the window shortcuts in
+// Studio.qml (Space, Left, Right, Ctrl+G, Escape).
+const QList<TlCommand> &clipCommands() {
+    static const QList<TlCommand> t = {
+        {"shorten",   "Shorten this shot",            "\u2212", "-",       "timing",      true, "selection"},
+        {"lengthen",  "Lengthen this shot",           "+",      "+",       "timing",      true, "selection"},
+        {"chop",      "Chop into two shots",          "\u2702", "C",       "timing",      true, "selection"},
+        {"rerollIn",  "Another moment from this clip", "\u25CE", "I",      "clip",        true, "selection"},
+        {"swap",      "Swap in a different clip",     "\u21C4", "S",       "clip",        true, "selection"},
+        {"remove",    "Remove this shot",             "\u2715", "Delete",  "destructive", true, "selection"},
+        {"rerollAll", "New in-point for every shot",  "\u27F3", "Shift+R", "all",         true, "timeline"},
+    };
+    return t;
+}
 } // namespace
 
 TimelineModel::TimelineModel(QObject *parent) : QAbstractListModel(parent) {}
@@ -312,3 +339,38 @@ QString TimelineModel::thumbForSegment(int index) const {
     if (index < 0 || index >= m_segs.size() || !m_clips) return {};
     return m_clips->thumbFor(m_segs[index].id);
 }
+
+QVariantList TimelineModel::commands() const {
+    QVariantList out;
+    for (const TlCommand &c : clipCommands()) {
+        QVariantMap row;
+        row["id"] = QString::fromUtf8(c.id);
+        row["label"] = QString::fromUtf8(c.label);
+        row["glyph"] = QString::fromUtf8(c.glyph);
+        row["keys"] = QString::fromUtf8(c.keys);
+        row["group"] = QString::fromUtf8(c.group);
+        row["bar"] = c.bar;
+        row["needs"] = QString::fromUtf8(c.needs);
+        out.append(row);
+    }
+    return out;
+}
+
+QString TimelineModel::commandKey(const QString &id) const {
+    for (const TlCommand &c : clipCommands())
+        if (id == QLatin1String(c.id)) return QString::fromUtf8(c.keys);
+    return {};
+}
+
+void TimelineModel::runCommand(const QString &id) {
+    if (id == QLatin1String("shorten")) shorten();
+    else if (id == QLatin1String("lengthen")) lengthen();
+    else if (id == QLatin1String("chop")) chop();
+    else if (id == QLatin1String("rerollIn")) rerollIn();
+    else if (id == QLatin1String("swap")) swap();
+    else if (id == QLatin1String("remove")) remove();
+    else if (id == QLatin1String("rerollAll")) rerollAll();
+    // Unknown id: nothing. Keys are always live (see Studio.qml), and every
+    // operation above already no-ops when nothing is selected.
+}
+

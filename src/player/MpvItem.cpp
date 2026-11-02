@@ -113,15 +113,10 @@ void MpvItem::pollEvents() {
     }
 }
 
-void MpvItem::loadAndSeek(const QString &path, double t) {
+void MpvItem::loadAndSeek(const QString &path, double t, double readaheadSecs) {
     if (!m_mpv || path.isEmpty()) return;
-    // Readahead defaults assume a local disk. On a network mount, asking for 20 s
-    // of buffer means the reader competes with the decoder for a slow link and
-    // the picture stalls on the frame it already had.
-    const bool remote = path.contains(QLatin1String("/gvfs/")) || path.startsWith(QLatin1String("//")) ||
-                        path.startsWith(QLatin1String("/mnt/")) || path.startsWith(QLatin1String("/media/"));
-    mpv_set_property_string(m_mpv, "demuxer-readahead-secs", remote ? "4" : "20");
-    mpv_set_property_string(m_mpv, "demuxer-max-bytes", remote ? "48MiB" : "256MiB");
+    m_path = path;
+    setReadahead(readaheadSecs);
 
     m_pendingPath = path;
     m_pendingSeek = t;
@@ -133,6 +128,19 @@ void MpvItem::loadAndSeek(const QString &path, double t) {
     m_buffered = -1;
     m_haveBufferInfo = false;
     maybeLoad();
+}
+
+void MpvItem::setReadahead(double readaheadSecs) {
+    if (!m_mpv) return;
+    // Readahead defaults assume a local disk. On a network mount, asking for 20 s
+    // of buffer means the reader competes with the decoder for a slow link and
+    // the picture stalls on the frame it already had.
+    const bool remote = m_path.contains(QLatin1String("/gvfs/")) || m_path.startsWith(QLatin1String("//")) ||
+                        m_path.startsWith(QLatin1String("/mnt/")) || m_path.startsWith(QLatin1String("/media/"));
+    const double secs = readaheadSecs > 0 ? readaheadSecs : (remote ? 4.0 : 20.0);
+    const QByteArray secsText = QByteArray::number(secs, 'f', 1);
+    mpv_set_property_string(m_mpv, "demuxer-readahead-secs", secsText.constData());
+    mpv_set_property_string(m_mpv, "demuxer-max-bytes", remote ? "48MiB" : "256MiB");
 }
 
 void MpvItem::maybeLoad() {

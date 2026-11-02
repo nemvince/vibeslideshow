@@ -45,8 +45,14 @@ public:
     Renderer *createRenderer() const override;
 
     // Load a file and seek it to `t` in one ordered command batch. Safe to call
-    // before the render context exists: the load waits for it.
-    void loadAndSeek(const QString &path, double t);
+    // before the render context exists: the load waits for it. `readaheadSecs`
+    // overrides how much mpv buffers ahead; negative means the default for where
+    // the file lives (a surface only being kept warm needs far less than one that
+    // is playing).
+    void loadAndSeek(const QString &path, double t, double readaheadSecs = -1);
+    // Change how far mpv reads ahead on the file this surface holds. Negative
+    // restores the default for the file's location.
+    void setReadahead(double readaheadSecs);
     // Blank this surface (show stopped).
     void clear();
     // Jump to an exact frame time.
@@ -83,6 +89,8 @@ private:
     QString m_pendingPath;
     bool m_pendingLoad = false;
     double m_pendingSeek = -1;
+    // What this surface holds, for deciding the readahead its location allows.
+    QString m_path;
 
     double m_frameTime = 0;
     double m_buffered = -1;

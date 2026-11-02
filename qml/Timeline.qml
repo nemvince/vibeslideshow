@@ -276,10 +276,11 @@ Item {
                     }
                 }
 
-                // ---- scrubbing and panning ----
+                // ---- scrubbing, panning and the clip menu ----
                 // Left-drag scrubs (the strip is the seek control, and always was);
-                // shift-drag, right-drag or middle-drag pans the strip; a click
-                // still places the playhead and selects the segment under it.
+                // shift-drag or middle-drag pans the strip; a click still places the
+                // playhead and selects the segment under it. Right-click is the
+                // clip menu's button now, so right-drag no longer pans.
                 MouseArea {
                     id: surface
                     anchors.fill: parent
@@ -293,12 +294,20 @@ Item {
                     }
 
                     onPressed: (m) => {
-                        panning = m.button !== Qt.LeftButton || (m.modifiers & Qt.ShiftModifier)
+                        if (m.button === Qt.RightButton) {
+                            const idx = timeline.indexAt(tl.timeAt(m.x))
+                            if (idx >= 0) {
+                                timeline.selected = idx
+                                tl.popupClipMenu(m.x, m.y)
+                            }
+                            return
+                        }
+                        panning = m.button === Qt.MiddleButton || (m.modifiers & Qt.ShiftModifier)
                         lastX = m.x
                         if (!panning) tl.seekTo(m.x)
                     }
                     onPositionChanged: (m) => {
-                        if (!pressed) return
+                        if (!pressed || m.button === Qt.RightButton) return
                         if (panning) {
                             pan(m.x - lastX)
                             lastX = m.x
@@ -307,7 +316,7 @@ Item {
                         }
                     }
                     onReleased: (m) => {
-                        if (!panning) {
+                        if (m.button === Qt.LeftButton && !panning) {
                             const idx = timeline.indexAt(tl.timeAt(m.x))
                             if (idx >= 0) timeline.selected = idx
                         }
@@ -365,6 +374,22 @@ Item {
             color: Theme.bg
             opacity: 0.55
         }
+    }
+
+    // The clip menu: right-click acts on the shot under the pointer, so the
+    // selection follows the click before the menu opens.
+    ClipMenu {
+        id: clipMenu
+        onPicked: (id) => timeline.runCommand(id)
+    }
+
+    // Open the menu at the pointer, kept inside the strip: a right-click near the
+    // bottom of the timeline should not push the menu off the window.
+    function popupClipMenu(x, y) {
+        const h = clipMenu.implicitHeight
+        clipMenu.x = Math.max(0, Math.min(tl.width - clipMenu.width, x))
+        clipMenu.y = (y + h > tl.height) ? Math.max(0, y - h) : y
+        clipMenu.open()
     }
 
     Connections {

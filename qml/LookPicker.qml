@@ -26,6 +26,7 @@ Item {
         border.width: 1
 
         Text {
+            objectName: "lookName"
             anchors { left: parent.left; leftMargin: 10; right: chevron.left; rightMargin: 6; verticalCenter: parent.verticalCenter }
             text: picker.activeName()
             color: Theme.ink
