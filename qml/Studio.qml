@@ -146,7 +146,7 @@ ApplicationWindow {
     Rectangle {
         id: transport
         anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
-        height: 152
+        height: 168
         color: Theme.panel
 
         Rectangle { anchors.top: parent.top; width: parent.width; height: 1; color: Theme.line }
@@ -155,7 +155,8 @@ ApplicationWindow {
             anchors { fill: parent; margins: Theme.gap }
             spacing: 8
 
-            // One control row: transport, then the edit actions, then Generate.
+            // One control row: transport, edit actions, volume, Generate. Seeking
+            // happens on the timeline itself.
             RowLayout {
                 Layout.fillWidth: true
                 spacing: 8
@@ -167,7 +168,7 @@ ApplicationWindow {
                     Text {
                         anchors.centerIn: parent
                         text: showCtl.playing ? "\u275A\u275A" : "\u25B6"
-                        color: showCtl.playing ? "#141516" : Theme.ink
+                        color: showCtl.playing ? Theme.ink : Theme.ink
                         font.pixelSize: 13
                     }
                     MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: studio.playPause() }
@@ -179,53 +180,16 @@ ApplicationWindow {
                     font.pixelSize: 12
                     font.family: "monospace"
                 }
-
-                DarkSlider {
-                    id: scrub
-                    Layout.fillWidth: true
-                    Layout.minimumWidth: 120
-                    from: 0
-                    to: Math.max(1, showCtl.duration)
-                    // Dragging sets `value` imperatively, which would kill a plain
-                    // binding: disable the follow while held, restore it on release.
-                    Binding {
-                        target: scrub
-                        property: "value"
-                        value: showCtl.position
-                        when: !scrub.pressed
-                        restoreMode: Binding.RestoreBindingOrValue
-                    }
-                    onMoved: studio.seek(value)
-
-                    // Cut marks over the track: you can see where the edit lands.
-                    Item {
-                        anchors.fill: parent
-                        Repeater {
-                            model: timeline.count
-                            delegate: Rectangle {
-                                required property int index
-                                width: 1
-                                height: 5
-                                y: (parent.height - height) / 2
-                                x: scrub.leftPadding + (showCtl.duration > 0
-                                                        ? timeline.cutTime(index) / showCtl.duration
-                                                        : 0) * scrub.availableWidth
-                                color: "#40ffffff"
-                            }
-                        }
-                    }
-                }
-
                 Text {
-                    text: showCtl.durationText
-                    color: Theme.dim
+                    text: "/ " + showCtl.durationText
+                    color: Theme.faint
                     font.pixelSize: 12
                     font.family: "monospace"
                 }
 
                 Rectangle { Layout.preferredWidth: 1; implicitHeight: 18; color: Theme.line; Layout.leftMargin: 2; Layout.rightMargin: 2 }
 
-                // Edit actions, left to right in the order you reach for them.
+                // Edit actions, in the order you reach for them.
                 IconButton { glyph: "\u2212"; tip: "Shorten"; enabled: timeline.selected >= 0; onClicked: timeline.shorten() }
                 IconButton { glyph: "+"; tip: "Lengthen"; enabled: timeline.selected >= 0; onClicked: timeline.lengthen() }
                 IconButton { glyph: "\u2702"; tip: "Chop in half"; enabled: timeline.selected >= 0; onClicked: timeline.chop() }
@@ -233,6 +197,15 @@ ApplicationWindow {
                 IconButton { glyph: "\u21C4"; tip: "Swap clip"; enabled: timeline.selected >= 0; onClicked: timeline.swap() }
                 IconButton { glyph: "\u2715"; tip: "Delete segment"; enabled: timeline.selected >= 0; onClicked: timeline.remove() }
                 IconButton { glyph: "\u27F3"; tip: "Re-roll every in-point"; enabled: timeline.count > 0; onClicked: timeline.rerollAll() }
+
+                Text {
+                    text: timeline.selected >= 0 ? timeline.selectionInfo : timeline.stats
+                    color: Theme.faint
+                    font.pixelSize: 11
+                    elide: Text.ElideRight
+                    Layout.fillWidth: true
+                    Layout.leftMargin: 8
+                }
 
                 Rectangle { Layout.preferredWidth: 1; implicitHeight: 18; color: Theme.line; Layout.leftMargin: 2; Layout.rightMargin: 2 }
 
@@ -267,107 +240,10 @@ ApplicationWindow {
                 SmallButton { text: "Stop"; flat: true; onClicked: studio.stopShow() }
             }
 
-            // The strip: segments with real thumbnails, selectable for editing.
-            Rectangle {
+            // The edit itself: segments, playhead and scrubbing in one surface.
+            Timeline {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                color: Theme.bg
-                radius: Theme.radius
-                border.color: Theme.line
-                clip: true
-
-                Flickable {
-                    id: stripFlick
-                    anchors.fill: parent
-                    anchors.margins: 6
-                    contentWidth: Math.max(width, stripRow.width)
-                    contentHeight: height
-                    flickableDirection: Flickable.HorizontalFlick
-                    ScrollBar.horizontal: ScrollBar {
-                        policy: ScrollBar.AsNeeded
-                        height: 6
-                        background: Item {}
-                        contentItem: Rectangle {
-                            implicitHeight: 4
-                            radius: 2
-                            color: Theme.faint
-                            opacity: parent.pressed ? 0.9 : 0.35
-                        }
-                    }
-
-                    Row {
-                        id: stripRow
-                        height: stripFlick.height
-                        spacing: 2
-
-                        Repeater {
-                            model: timeline
-                            delegate: Item {
-                                id: cell
-                                required property int index
-                                required property var model
-                                height: stripRow.height
-                                // Widths are proportional to segment length, min 8px.
-                                width: showCtl.duration > 0
-                                       ? Math.max(8, model.segLen / showCtl.duration * Math.max(600, stripFlick.width))
-                                       : 20
-
-                                readonly property bool showThumb: width >= 26
-
-                                Rectangle {
-                                    id: cellBg
-                                    anchors.fill: parent
-                                    anchors.rightMargin: 2
-                                    radius: 4
-                                    color: model.segSelected ? "#2c3138" : Theme.panelHi
-                                    border.color: model.segSelected ? Theme.accent : "transparent"
-                                    border.width: model.segSelected ? 2 : 1
-                                    clip: true
-
-                                    Image {
-                                        anchors.fill: parent
-                                        anchors.margins: 2
-                                        visible: cell.showThumb
-                                        fillMode: Image.PreserveAspectCrop
-                                        asynchronous: true
-                                        cache: true
-                                        source: model.segThumb && cell.showThumb ? "file://" + model.segThumb : ""
-                                        opacity: 0.85
-                                    }
-                                    Rectangle {
-                                        anchors.fill: parent
-                                        anchors.margins: 2
-                                        color: model.segColor
-                                        opacity: model.segThumb && cell.showThumb ? 0 : 0.45
-                                    }
-                                    Rectangle {
-                                        anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
-                                        height: 3
-                                        color: Theme.accent
-                                        opacity: model.segSelected ? 1 : 0
-                                    }
-                                }
-
-                                MouseArea {
-                                    anchors.fill: parent
-                                    cursorShape: Qt.PointingHandCursor
-                                    onClicked: {
-                                        timeline.selected = model.segIndex
-                                        studio.cueSegment(model.segIndex)
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                Text {
-                    anchors.centerIn: parent
-                    visible: timeline.count === 0
-                    text: studio.busy ? studio.progressLabel : "Pick a song and a look, then press Generate"
-                    color: Theme.faint
-                    font.pixelSize: 12
-                }
             }
         }
     }

@@ -265,18 +265,30 @@ Library::ScanOutcome scanDirs(const QStringList &dirs, const std::function<void(
 }
 
 
-// Up to 12 evenly spaced 32x18 gray frames, scored for motion, colour, exposure
-// and variety. Pure and thread-safe: shells out to ffmpeg, touches no members.
-bool scoreClip(const Clip &c, int *score, int *mv, double *dk) {
+bool isRemotePath(const QString &path) {
+    return path.contains(QLatin1String("/gvfs/")) || path.startsWith(QLatin1String("//")) ||
+           path.startsWith(QLatin1String("/mnt/")) || path.startsWith(QLatin1String("/media/"));
+}
+
+// How many frames a clip will be sampled at. Used for both the work and the exact
+// total, so the progress bar measures frames rather than whole clips.
+int sampleCount(const Clip &c) {
     const double dur = (c.lrfDur > 0) ? c.lrfDur : c.duration;
     const QString path = (c.lrfDur > 0) ? c.lrf : c.path;
     // Every sample is a separate ffmpeg invocation; on a network mount each one
     // costs a round trip, so take fewer of them. The score moves by a few points,
     // the wait moves by minutes.
-    const bool remote = path.contains(QLatin1String("/gvfs/")) || path.startsWith(QLatin1String("//")) ||
-                        path.startsWith(QLatin1String("/mnt/")) || path.startsWith(QLatin1String("/media/"));
-    const int maxSamples = remote ? 5 : 12;
-    const int want = std::min(maxSamples, std::max(3, int(std::ceil(dur / 4.0))));
+    const int maxSamples = isRemotePath(path) ? 5 : 12;
+    return std::min(maxSamples, std::max(3, int(std::ceil(dur / 4.0))));
+}
+
+// Up to 12 evenly spaced 32x18 gray frames, scored for motion, colour, exposure
+// and variety. Pure and thread-safe: shells out to ffmpeg, touches no members.
+// `sampleDone` runs after each frame lands, so progress moves inside a clip too.
+bool scoreClip(const Clip &c, int *score, int *mv, double *dk, const std::function<void()> &sampleDone = {}) {
+    const double dur = (c.lrfDur > 0) ? c.lrfDur : c.duration;
+    const QString path = (c.lrfDur > 0) ? c.lrf : c.path;
+    const int want = sampleCount(c);
     QList<QByteArray> samples;
     const int px = 32 * 18;
     for (int s = 0; s < want; s++) {
@@ -297,6 +309,7 @@ bool scoreClip(const Clip &c, int *score, int *mv, double *dk) {
         if (p.exitStatus() != QProcess::NormalExit || p.exitCode() != 0) continue;
         if (buf.size() < px * 3) continue;
         samples.append(buf.left(px * 3));
+        if (sampleDone) sampleDone();
     }
     if (samples.size() < std::min(3, want)) return false;
 
@@ -456,6 +469,7 @@ void Library::restartIfPending() {
 void Library::scoreClips(quint64 gen) {
     m_scoreDone = 0;
     m_scoreTotal = m_clips.size();
+    m_scoreFrac = 0;
     emit scoringProgress(0, m_scoreTotal);
 
     // Snapshot everything the worker needs; the live list stays on this thread.
@@ -476,8 +490,30 @@ void Library::scoreClips(quint64 gen) {
         std::atomic<int> done{0};
         std::atomic<bool> flushing{false};
 
+        // Progress is measured in sampled frames, not clips: a single long clip on
+        // a slow share would otherwise leave the bar parked at zero for minutes.
+        int unitsTotal = 0;
+        for (const Clip &c : snapshot) unitsTotal += sampleCount(c);
+        std::atomic<int> unitsDone{0};
+        std::atomic<qint64> lastFractionPost{0};
+
         std::vector<Score> results;
         results.resize(size_t(snapshot.size()));
+
+        auto postFraction = [this, gen, &unitsDone, unitsTotal, &lastFractionPost]() {
+            if (unitsTotal <= 0) return;
+            // Throttle: a queued call per sampled frame would flood the GUI thread.
+            const qint64 now = QDateTime::currentMSecsSinceEpoch();
+            const qint64 prev = lastFractionPost.load();
+            if (now - prev < 120) return;
+            lastFractionPost.store(now);
+            const double frac = double(unitsDone.load()) / double(unitsTotal);
+            QMetaObject::invokeMethod(this, [this, gen, frac]() {
+                if (gen != m_gen) return;
+                setScoreFrac(frac);
+                emit scoringProgress(m_scoreDone, m_scoreTotal);
+            }, Qt::QueuedConnection);
+        };
 
         auto postProgress = [this, gen](int d, int total) {
             QMetaObject::invokeMethod(this, [this, gen, d, total]() {
@@ -523,8 +559,19 @@ void Library::scoreClips(quint64 gen) {
                     s.mv = hit.value("mv").toInt();
                     s.dk = hit.value("dk").toDouble();
                     s.ok = true;
+                    unitsDone += sampleCount(c);
+                    postFraction();
                 } else {
-                    s.ok = scoreClip(c, &s.score, &s.mv, &s.dk);
+                    int counted = 0;
+                    s.ok = scoreClip(c, &s.score, &s.mv, &s.dk, [&]() {
+                        ++counted;
+                        unitsDone += 1;
+                        postFraction();
+                    });
+                    // Frames that could not be read are still work accounted for,
+                    // otherwise a failed clip would leave the bar short of 100 %.
+                    unitsDone += std::max(0, sampleCount(c) - counted);
+                    postFraction();
                     // Unreadable is not "dark": scoring 0 with dk=1 would let the
                     // junk filter silently drop a clip the network failed on.
                     if (!s.ok) { s.score = 0; s.mv = 0; s.dk = 0.25; }

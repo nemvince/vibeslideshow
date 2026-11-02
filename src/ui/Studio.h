@@ -139,6 +139,7 @@ private:
     void loadSongFile(const QString &path);
     void noteProgress(int done, int total);
     QString etaSuffix(int done, int total) const;
+    QString etaFraction(double frac) const;
     QString configDir() const;
 
     Library *m_lib = nullptr;

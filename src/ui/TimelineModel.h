@@ -18,6 +18,9 @@ class TimelineModel : public QAbstractListModel {
     Q_PROPERTY(QString selectionInfo READ selectionInfo NOTIFY selectedChanged)
     Q_PROPERTY(QString stats READ stats NOTIFY statsChanged)
     Q_PROPERTY(bool hasTimeline READ hasTimeline NOTIFY countChanged)
+    // Length the edit was cut to. The player's duration can still be unknown while
+    // mpv opens the file; layout must not depend on it.
+    Q_PROPERTY(double songDuration READ songDuration NOTIFY songDurationChanged)
 public:
     enum Roles {
         SegIdRole = Qt::UserRole + 1, SegStartRole, SegLenRole, SegInRole,
@@ -36,7 +39,8 @@ public:
     void setScheduler(Scheduler *s) { m_sched = s; }
     // The strip shares the rail's thumbnails rather than decoding its own.
     void setClipModel(ClipModel *cm) { m_clips = cm; }
-    void setSongDuration(double d) { m_songDur = d; }
+    void setSongDuration(double d);
+    double songDuration() const { return m_songDur; }
 
     int selected() const { return m_sel; }
     void setSelected(int i);
@@ -46,6 +50,8 @@ public:
     QString stats() const;
     // Song time where a segment starts, for scrubber tick marks.
     Q_INVOKABLE double cutTime(int row) const;
+    // Which segment covers `songTime` (the timeline's own hit test).
+    Q_INVOKABLE int indexAt(double songTime) const;
 
     const QList<TlSeg> &segments() const { return m_segs; }
     // Crossfade for each segment, in milliseconds, parallel to segments().
@@ -69,6 +75,7 @@ public:
 
 signals:
     void countChanged();
+    void songDurationChanged();
     void selectedChanged();
     void editsChanged();
     void statsChanged();

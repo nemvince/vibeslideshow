@@ -30,6 +30,9 @@ public:
     bool busy() const { return m_busy; }
     int scoreDone() const { return m_scoreDone; }
     int scoreTotal() const { return m_scoreTotal; }
+    // 0..1 of the scoring work done, counted in sampled frames rather than clips:
+    // one long clip otherwise leaves the bar parked at zero for minutes.
+    double scoreFraction() const { return m_scoreFrac; }
     int scanDone() const { return m_scanDone; }
     int scanTotal() const { return m_scanTotal; }
 
@@ -93,6 +96,8 @@ private:
     bool m_restart = false;
     int m_scoreDone = 0;
     int m_scoreTotal = 0;
+    double m_scoreFrac = 0;
+    void setScoreFrac(double f) { m_scoreFrac = f; }
     int m_scanDone = 0;
     int m_scanTotal = 0;
     quint64 m_gen = 0;

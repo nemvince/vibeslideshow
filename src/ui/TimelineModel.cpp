@@ -249,6 +249,21 @@ void TimelineModel::remove() {
     touch();
 }
 
+void TimelineModel::setSongDuration(double d) {
+    if (m_songDur == d) return;
+    m_songDur = d;
+    emit songDurationChanged();
+}
+
+int TimelineModel::indexAt(double songTime) const {
+    double at = 0;
+    for (int i = 0; i < m_segs.size(); i++) {
+        at += m_segs[i].len;
+        if (songTime < at) return i;
+    }
+    return m_segs.isEmpty() ? -1 : m_segs.size() - 1;
+}
+
 double TimelineModel::cutTime(int row) const {
     if (row < 0 || row > m_segs.size()) return 0;
     double t = 0;

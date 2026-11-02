@@ -339,9 +339,12 @@ double Studio::progress() const {
     if (!busy() || !m_lib) return -1;
     // A phase that has counted nothing yet is "unknown", not "0%": the bar sweeps
     // instead of drawing a sliver, which is what made it look absent.
-    if (m_lib->scoreTotal() > 0 && m_lib->scoreDone() > 0)
-        return qBound(0.0, double(m_lib->scoreDone()) / double(m_lib->scoreTotal()), 1.0);
-    if (m_lib->scoreTotal() > 0) return -1;
+    if (m_lib->scoreTotal() > 0) {
+        // Sampled-frame fraction: moves during the very first clip.
+        const double f = m_lib->scoreFraction();
+        if (f > 0.0005) return qBound(0.0, f, 1.0);
+        return -1;
+    }
     if (m_lib->scanTotal() > 0 && m_lib->scanDone() > 0)
         return qBound(0.0, double(m_lib->scanDone()) / double(m_lib->scanTotal()), 1.0);
     return -1;
@@ -349,15 +352,36 @@ double Studio::progress() const {
 
 QString Studio::progressLabel() const {
     if (!m_lib || !busy()) return {};
-    if (m_lib->scoreTotal() > 0)
-        return QStringLiteral("Scoring %1 of %2%3")
-            .arg(m_lib->scoreDone()).arg(m_lib->scoreTotal())
-            .arg(etaSuffix(m_lib->scoreDone(), m_lib->scoreTotal()));
+    if (m_lib->scoreTotal() > 0) {
+        // Whole clips finish slowly on a network share; until the first one lands
+        // the percentage is the only honest number.
+        if (m_lib->scoreDone() > 0)
+            return QStringLiteral("Scoring %1 of %2%3")
+                .arg(m_lib->scoreDone()).arg(m_lib->scoreTotal())
+                .arg(etaSuffix(m_lib->scoreDone(), m_lib->scoreTotal()));
+        // Percentage first: the status slot elides, and the number matters more
+        // than the tail of the ETA.
+        const int pct = int(std::lround(m_lib->scoreFraction() * 100));
+        return QStringLiteral("Scoring clips · %1%2")
+            .arg(pct)
+            .arg(etaFraction(m_lib->scoreFraction()));
+    }
     if (m_lib->scanTotal() > 0)
         return QStringLiteral("Found %1 videos · probed %2%3")
             .arg(m_lib->scanTotal()).arg(m_lib->scanDone())
             .arg(etaSuffix(m_lib->scanDone(), m_lib->scanTotal()));
     return m_status.isEmpty() ? QStringLiteral("Working…") : m_status;
+}
+
+QString Studio::etaFraction(double frac) const {
+    const double elapsed = m_phaseClock.isValid() ? m_phaseClock.elapsed() / 1000.0 : 0.0;
+    if (elapsed < 2.0 || frac <= 0.001) return QStringLiteral(" · estimating…");
+    const double rate = frac / elapsed;
+    if (rate <= 0) return {};
+    const int left = int(std::ceil((1.0 - frac) / rate));
+    if (left <= 0) return QStringLiteral(" · almost done");
+    if (left < 60) return QStringLiteral(" · ~%1s left").arg(left);
+    return QStringLiteral(" · ~%1 min left").arg(int(std::ceil(left / 60.0)));
 }
 
 QString Studio::etaSuffix(int done, int total) const {
@@ -376,7 +400,8 @@ QString Studio::etaSuffix(int done, int total) const {
 
 void Studio::noteProgress(int done, int total) {
     // A different total means a new pass started (new scan, new library).
-    if (total != m_phaseTotal || done <= 1) {
+    // Restarting on every zero-progress tick would keep the ETA at "estimating".
+    if (total != m_phaseTotal) {
         m_phaseTotal = total;
         m_phaseClock.restart();
     }

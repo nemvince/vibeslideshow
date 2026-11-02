@@ -29,6 +29,34 @@ Item {
         Behavior on width { NumberAnimation { duration: 240; easing.type: Easing.OutCubic } }
     }
 
+    // Determinate, still working: a soft pulse drifting through the empty space,
+    // the usual "this is still moving" cue without faking the number.
+    Item {
+        id: shimmer
+        visible: bar.active && bar.value >= 0.005 && bar.value < 0.995
+        x: fill.width
+        width: Math.max(0, bar.width - fill.width)
+        height: parent.height
+        clip: true
+
+        Rectangle {
+            id: pulse
+            width: Math.max(30, shimmer.width * 0.3)
+            height: parent.height
+            color: "#40f2a73b"
+            SequentialAnimation on x {
+                running: shimmer.visible
+                loops: Animation.Infinite
+                NumberAnimation {
+                    from: -pulse.width
+                    to: shimmer.width
+                    duration: 1500
+                    easing.type: Easing.InOutQuad
+                }
+            }
+        }
+    }
+
     // No total yet: a marker that travels, permanently moving so the window never
     // looks frozen while the file system is being walked.
     Rectangle {
