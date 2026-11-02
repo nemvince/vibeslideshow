@@ -27,6 +27,14 @@ MINGW_PREFIX="${MINGW_PREFIX:-/ucrt64}"
 EXE="$BUILD_DIR/vibeslideshow.exe"
 [ -f "$EXE" ] || { echo "package-windows: $EXE missing" >&2; exit 1; }
 
+# Phase timings: the packaging step is one CI step and these are the numbers that
+# say whether its time is going where it should.
+PHASE=$SECONDS
+phase() {
+    echo "== $1: $((SECONDS - PHASE))s"
+    PHASE=$SECONDS
+}
+
 STAGE="dist/$NAME"
 rm -rf "$STAGE" "dist/$NAME.zip"
 mkdir -p "$STAGE"
@@ -38,6 +46,7 @@ WINDEPLOYQT="$(command -v windeployqt.exe || command -v windeployqt || true)"
 [ -n "$WINDEPLOYQT" ] || { echo "package-windows: windeployqt not found" >&2; exit 1; }
 "$WINDEPLOYQT" --release --no-translations --no-compiler-runtime --no-system-d3d-compiler \
                --no-opengl-sw --qmldir qml "$STAGE/vibeslideshow.exe"
+phase "windeployqt"
 
 # ffmpeg/ffprobe ride along: the app shells out to them, and an app started from
 # Explorer never sees the user's PATH.
@@ -95,6 +104,7 @@ done
 copy_deps "$STAGE/ffmpeg.exe"
 copy_deps "$STAGE/ffprobe.exe"
 copy_deps "$STAGE/vibeslideshow.exe"
+phase "DLLs"
 
 # windeployqt reasons from the executable, so a dependency that only a *plugin*
 # needs is left out: the Qt Quick Controls 2 plugin links Qt6Widgets, which this app
@@ -136,12 +146,13 @@ for required in \
 done
 
 if command -v 7z >/dev/null 2>&1; then
-    # -mx1: the store is already-compressed media plus a hundred DLLs, so the
-    # default level spends most of the packaging step to save a few megabytes.
+    # -mx1: the store is already-compressed media plus a hundred DLLs, so a high
+    # level spends minutes to save a few megabytes.
     7z a -tzip -mx1 -bso0 -bsp0 "dist/$NAME.zip" "$STAGE" >/dev/null
 elif command -v zip >/dev/null 2>&1; then
     (cd dist && zip -qr "$NAME.zip" "$NAME")
 else
     echo "package-windows: need 7z or zip" >&2; exit 1
 fi
+phase "zip"
 echo "== dist/$NAME.zip"
