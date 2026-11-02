@@ -74,6 +74,12 @@ struct Cuts {
     int cutCount() const { return times.size(); }
 };
 
+// One thing the project imported: a folder (walked recursively) or a single file.
+struct MediaSource {
+    QString path;        // absolute
+    bool isDir = false;
+};
+
 // One segment of an edited timeline: clip `id` from in-point `s` for `len` seconds.
 struct TlSeg {
     int id = -1;

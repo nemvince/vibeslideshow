@@ -80,6 +80,9 @@ public:
     Q_INVOKABLE void rerollIn();
     Q_INVOKABLE void swap();
     Q_INVOKABLE void remove();
+    // Footage that left the project: every shot cut from it leaves the strip and
+    // its time goes to the last shot, so the song stays covered.
+    void dropClips(const QList<int> &clipIds);
     // Put a specific clip into a segment (drag-and-drop / new in-point).
     Q_INVOKABLE void replaceSegment(int row, int clipId, double inPoint);
     Q_INVOKABLE void rerollAll();

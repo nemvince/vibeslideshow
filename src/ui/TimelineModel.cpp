@@ -4,6 +4,7 @@
 #include "ui/ClipModel.h"
 
 #include <QFileInfo>
+#include <QSet>
 #include <algorithm>
 #include <cmath>
 
@@ -289,6 +290,33 @@ void TimelineModel::remove() {
     setSelected(std::min(k, int(m_segs.size()) - 1));
     emit dataChanged(index(0, 0), index(m_segs.size() - 1, 0), {SegLenRole, SegStartRole});
     emit countChanged();
+    touch();
+}
+
+void TimelineModel::dropClips(const QList<int> &clipIds) {
+    if (m_segs.isEmpty() || clipIds.isEmpty()) return;
+    const QSet<int> gone(clipIds.begin(), clipIds.end());
+    QList<TlSeg> keep;
+    QList<double> fades;
+    double freed = 0;
+    for (int i = 0; i < m_segs.size(); i++) {
+        if (gone.contains(m_segs[i].id)) {
+            freed += m_segs[i].len;
+            continue;
+        }
+        keep.append(m_segs[i]);
+        fades.append(i < m_fades.size() ? m_fades[i] : 0);
+    }
+    if (keep.size() == m_segs.size()) return;
+    beginResetModel();
+    m_segs = keep;
+    m_fades = fades;
+    m_sel = -1;
+    if (!m_segs.isEmpty()) m_segs.last().len += freed;   // the song stays covered
+    endResetModel();
+    emit countChanged();
+    emit selectedChanged();
+    emit statsChanged();
     touch();
 }
 

@@ -90,39 +90,82 @@ QString fallbackCacheFile(const QString &dir) {
            + QStringLiteral("/cache-%1.json").arg(slug);
 }
 
-void loadCaches(const QStringList &dirs, QHash<QString, QVariantMap> *cache, QHash<QString, QString> *paths) {
-    for (const QString &dir : dirs) {
-        for (const QString &p : {localCacheFile(dir), fallbackCacheFile(dir)}) {
+// Where probe results are cached: `key` is the directory a clip path must start with
+// to belong to this bucket. A folder source caches beside the footage, a loose file
+// caches in the app's cache directory (never litter a user folder it merely came from).
+struct CacheBucket {
+    QString key;
+    QString localPath;     // empty: never write here
+    QString fallbackPath;
+};
+
+QList<CacheBucket> cacheBucketsFor(const QList<MediaSource> &sources) {
+    QList<CacheBucket> buckets;
+    QSet<QString> seen;
+    auto norm = [](QString p) {
+        while (p.size() > 1 && p.endsWith(QLatin1Char('/'))) p.chop(1);
+        return p;
+    };
+    auto add = [&](CacheBucket b) {
+        b.key = norm(b.key);
+        if (seen.contains(b.key)) return;
+        seen.insert(b.key);
+        buckets.append(b);
+    };
+    for (const MediaSource &s : sources) {
+        if (s.isDir) {
+            add({s.path, localCacheFile(norm(s.path)), fallbackCacheFile(norm(s.path))});
+        } else {
+            const QString dir = norm(QFileInfo(s.path).absolutePath());
+            add({dir, QString(), fallbackCacheFile(dir)});
+        }
+    }
+    return buckets;
+}
+
+// A clip belongs to a bucket when its path sits *inside* that key directory.
+bool inBucket(const QString &path, const QString &key) {
+    const QString prefix = key.endsWith(QLatin1Char('/')) ? key : key + QLatin1Char('/');
+    return path.startsWith(prefix);
+}
+
+void loadCaches(const QList<CacheBucket> &buckets, QHash<QString, QVariantMap> *cache,
+                QHash<int, QString> *targets) {
+    for (int i = 0; i < buckets.size(); i++) {
+        const CacheBucket &b = buckets[i];
+        for (const QString &p : {b.localPath, b.fallbackPath}) {
+            if (p.isEmpty()) continue;
             QFile f(p);
             if (!f.open(QIODevice::ReadOnly)) continue;
             const QJsonObject o = QJsonDocument::fromJson(f.readAll()).object();
             for (auto it = o.begin(); it != o.end(); ++it) cache->insert(it.key(), it.value().toObject().toVariantMap());
-            paths->insert(dir, p);
+            targets->insert(i, p);
             break;
         }
     }
 }
 
-void writeCaches(const QStringList &dirs, const QHash<QString, QVariantMap> &cache,
-                 const QHash<QString, QString> &paths) {
-    for (const QString &dir : dirs) {
+void writeCaches(const QList<CacheBucket> &buckets, const QHash<QString, QVariantMap> &cache,
+                 const QHash<int, QString> &targets) {
+    for (int i = 0; i < buckets.size(); i++) {
+        const CacheBucket &b = buckets[i];
         QJsonObject own;
         for (auto it = cache.begin(); it != cache.end(); ++it) {
-            if (!it.key().startsWith(dir)) continue;
+            if (!inBucket(it.key(), b.key)) continue;
             own.insert(it.key(), QJsonObject::fromVariantMap(it.value()));
         }
         if (own.isEmpty()) continue;
         const QByteArray json = QJsonDocument(own).toJson(QJsonDocument::Compact);
-        const QString target = paths.contains(dir) ? paths.value(dir) : localCacheFile(dir);
+        const QString target = targets.contains(i) ? targets.value(i)
+                               : (!b.localPath.isEmpty() ? b.localPath : b.fallbackPath);
         const bool wroteLocal = [&]() {
             QFile f(target);
             if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) return false;
             return f.write(json) == json.size();
         }();
         if (wroteLocal) continue;
-        const QString fallback = fallbackCacheFile(dir);
-        QDir().mkpath(QFileInfo(fallback).absolutePath());
-        QFile f(fallback);
+        QDir().mkpath(QFileInfo(b.fallbackPath).absolutePath());
+        QFile f(b.fallbackPath);
         if (f.open(QIODevice::WriteOnly | QIODevice::Truncate)) f.write(json);
     }
 }
@@ -225,7 +268,7 @@ bool probeClip(const QString &path, qint64 size, const QHash<QString, QString> &
     return true;
 }
 
-// Walks every configured folder and probes each video. Pure: builds its own
+// Walks every configured source and probes each video. Pure: builds its own
 // list, touches no members, so it is safe to run on a worker thread.
 //
 // Two things this has to get right on a real footage drive:
@@ -234,16 +277,30 @@ bool probeClip(const QString &path, qint64 size, const QHash<QString, QString> &
 //  - The same clip is often copied into several date folders. A duplicate is the
 //    same file name at the same byte size; it is dropped before probing, so the
 //    edit cannot show the same shot twice by accident.
-Library::ScanOutcome scanDirs(const QStringList &dirs, const std::function<void(int, int)> &progress) {
+Library::ScanOutcome scanSources(const QList<MediaSource> &sources, const QSet<QString> &hidden,
+                                 const QList<CacheBucket> &buckets,
+                                 const std::function<void(int, int)> &progress) {
     QHash<QString, QString> lrfFor;   // stem -> proxy path
     QStringList candidates;
-    for (const QString &dir : dirs) {
-        QDirIterator it(dir, QDir::Files, QDirIterator::Subdirectories);
-        while (it.hasNext()) {
-            const QString path = it.next();
-            const QString e = extOf(path);
-            if (e == QLatin1String("lrf")) lrfFor.insert(stemOf(path), path);
-            else if (videoExts().contains(e)) candidates.append(path);
+    for (const MediaSource &s : sources) {
+        if (s.isDir) {
+            QDirIterator it(s.path, QDir::Files, QDirIterator::Subdirectories);
+            while (it.hasNext()) {
+                const QString path = it.next();
+                const QString e = extOf(path);
+                if (e == QLatin1String("lrf")) lrfFor.insert(stemOf(path), path);
+                else if (videoExts().contains(e) && !hidden.contains(path)) candidates.append(path);
+            }
+        } else {
+            if (hidden.contains(s.path)) continue;
+            if (!videoExts().contains(extOf(s.path))) continue;
+            candidates.append(s.path);
+            // A loose file gets the same .LRF pairing its folder walk would have given it.
+            const QDir parent = QFileInfo(s.path).absoluteDir();
+            const QString stem = stemOf(s.path);
+            for (const QString &sibling : parent.entryList({QStringLiteral("*.[lL][rR][fF]")}, QDir::Files))
+                if (stemOf(sibling) == stemOf(QFileInfo(s.path).fileName()))
+                    lrfFor.insert(stem, parent.absoluteFilePath(sibling));
         }
     }
     // Sort first, dedupe second: the copy that wins must be the same one every
@@ -264,8 +321,8 @@ Library::ScanOutcome scanDirs(const QStringList &dirs, const std::function<void(
     // Probe results are cached beside the scores, so a folder that has not changed
     // since the last scan opens no file at all: not one ffprobe per clip.
     QHash<QString, QVariantMap> cache;
-    QHash<QString, QString> cachePaths;
-    loadCaches(dirs, &cache, &cachePaths);
+    QHash<int, QString> cachePaths;
+    loadCaches(buckets, &cache, &cachePaths);
 
     // Probe in parallel: every ffprobe over SMB/NFS is a round trip, and running
     // them one by one turns a few hundred clips into a coffee break.
@@ -287,7 +344,7 @@ Library::ScanOutcome scanDirs(const QStringList &dirs, const std::function<void(
             std::lock_guard<std::mutex> lock(cacheLock);
             copy = cache;
         }
-        writeCaches(dirs, copy, cachePaths);
+        writeCaches(buckets, copy, cachePaths);
         flushing = false;
     };
 
@@ -492,6 +549,33 @@ void Library::setBusyInternal(bool b) {
     emit busyChanged();
 }
 
+QString Library::sourcesLabel() const {
+    QStringList names;
+    for (const MediaSource &s : m_sources) {
+        const QString name = QFileInfo(s.path).fileName();
+        names.append(name.isEmpty() ? s.path : name);
+    }
+    if (names.size() > 3) {
+        const int more = names.size() - 3;
+        names = names.mid(0, 3);
+        return names.join(QStringLiteral(", ")) + QStringLiteral(" and %1 more").arg(more);
+    }
+    return names.join(QStringLiteral(", "));
+}
+
+void Library::dropClips(const QSet<QString> &paths) {
+    if (paths.isEmpty()) return;
+    QList<Clip> keep;
+    keep.reserve(m_clips.size());
+    for (const Clip &c : m_clips)
+        if (!paths.contains(c.path)) keep.append(c);
+    if (keep.size() == m_clips.size()) return;
+    m_clips = keep;
+    m_indexById.clear();
+    for (int i = 0; i < m_clips.size(); i++) m_indexById.insert(m_clips[i].id, i);
+    emit indexed();
+}
+
 void Library::startIndex() {
     if (m_busy) {
         m_restart = true;
@@ -504,10 +588,12 @@ void Library::startIndex() {
     m_scanDone = 0;
     m_scanTotal = 0;
     const quint64 gen = ++m_gen;
-    const QStringList dirs = m_dirs;
+    const QList<MediaSource> sources = m_sources;
+    const QSet<QString> hidden = m_hidden;
+    const QList<CacheBucket> buckets = cacheBucketsFor(sources);
 
     // The index pass shells out to ffprobe per file: keep it off the UI thread.
-    QThread *t = QThread::create([this, gen, dirs]() {
+    QThread *t = QThread::create([this, gen, sources, hidden, buckets]() {
         auto report = [this](int done, int total) {
             QMetaObject::invokeMethod(this, [this, done, total]() {
                 m_scanDone = done;
@@ -515,7 +601,7 @@ void Library::startIndex() {
                 emit scanProgress(done, total);
             }, Qt::QueuedConnection);
         };
-        const ScanOutcome outcome = scanDirs(dirs, report);
+        const ScanOutcome outcome = scanSources(sources, hidden, buckets, report);
         QMetaObject::invokeMethod(this, [this, gen, outcome]() { applyIndex(gen, outcome); }, Qt::QueuedConnection);
     });
     connect(t, &QThread::finished, t, &QObject::deleteLater);
@@ -553,9 +639,9 @@ void Library::applyIndex(quint64 gen, const ScanOutcome &outcome) {
         // mount those are very different problems.
         if (outcome.skipped > 0)
             emit failed(QStringLiteral("Could not read %1 of %2 videos in %3")
-                            .arg(outcome.skipped).arg(outcome.files).arg(m_dirs.join(QStringLiteral(", "))));
+                            .arg(outcome.skipped).arg(outcome.files).arg(sourcesLabel()));
         else
-            emit failed(QStringLiteral("No playable videos found in %1").arg(m_dirs.join(QStringLiteral(", "))));
+            emit failed(QStringLiteral("No playable videos found in %1").arg(sourcesLabel()));
         emit indexed();
         return;
     }
@@ -578,12 +664,12 @@ void Library::scoreClips(quint64 gen) {
 
     // Snapshot everything the worker needs; the live list stays on this thread.
     const QList<Clip> snapshot = m_clips;
-    const QStringList dirs = m_dirs;
+    const QList<CacheBucket> buckets = cacheBucketsFor(m_sources);
 
-    QThread *t = QThread::create([this, gen, snapshot, dirs]() {
+    QThread *t = QThread::create([this, gen, snapshot, buckets]() {
         QHash<QString, QVariantMap> cache;
-        QHash<QString, QString> cachePaths;
-        loadCaches(dirs, &cache, &cachePaths);
+        QHash<int, QString> cachePaths;
+        loadCaches(buckets, &cache, &cachePaths);
 
         // Scoring is 12 ffmpeg spawns per clip; over SMB that is the slow part of
         // the app by an order of magnitude, so the clips are spread over threads
@@ -634,7 +720,7 @@ void Library::scoreClips(quint64 gen) {
                 std::lock_guard<std::mutex> lock(cacheLock);
                 copy = cache;
             }
-            writeCaches(dirs, copy, cachePaths);
+            writeCaches(buckets, copy, cachePaths);
             flushing = false;
         };
 

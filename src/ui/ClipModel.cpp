@@ -88,11 +88,25 @@ ClipModel::~ClipModel() { delete m_jobs; }
 
 void ClipModel::setLibrary(Library *lib) {
     m_lib = lib;
+    rebuild();
+}
+
+void ClipModel::setSearch(const QString &s) {
+    if (m_search == s) return;
+    m_search = s;
+    rebuild();
+    emit searchChanged();
+}
+
+void ClipModel::rebuild() {
     beginResetModel();
     m_ids.clear();
     m_passing.clear();
-    if (lib) {
-        for (const Clip &c : lib->clips()) m_ids.append(c.id);
+    if (m_lib) {
+        for (const Clip &c : m_lib->clips())
+            if (m_search.isEmpty() ||
+                QFileInfo(c.path).fileName().contains(m_search, Qt::CaseInsensitive))
+                m_ids.append(c.id);
     }
     endResetModel();
     emit countChanged();

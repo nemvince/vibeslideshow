@@ -5,6 +5,7 @@
 #include <QVariantMap>
 #include <QVariantList>
 #include <QStringList>
+#include <QSet>
 #include <memory>
 #include "core/Params.h"
 #include "core/Types.h"
@@ -15,12 +16,12 @@ class ClipModel;
 class TimelineModel;
 class Show;
 
-// The one object the QML studio talks to. It owns the document (dirs, song,
+// The one object the QML studio talks to. It owns the document (sources, song,
 // params, filters, profiles), mediates the worker passes, and exposes
 // plain-language state instead of the 33 raw knobs.
 class Studio : public QObject {
     Q_OBJECT
-    Q_PROPERTY(QStringList videoDirs READ videoDirs NOTIFY videoDirsChanged)
+    Q_PROPERTY(QVariantList sources READ sources NOTIFY sourcesChanged)
     Q_PROPERTY(QString songPath READ songPath NOTIFY songChanged)
     Q_PROPERTY(QString songName READ songName NOTIFY songChanged)
     Q_PROPERTY(bool songAnalysed READ songAnalysed NOTIFY analysisChanged)
@@ -65,7 +66,7 @@ public:
     explicit Studio(QObject *parent = nullptr);
     ~Studio() override;
 
-    QStringList videoDirs() const { return m_dirs; }
+    QVariantList sources() const;
     QString songPath() const { return m_song; }
     QString songName() const;
     bool songAnalysed() const { return m_analysis.valid(); }
@@ -107,11 +108,13 @@ public:
 
     void setVolume(double v);
 
-    Q_INVOKABLE void startIndexing(const QStringList &dirs);
-    // QML pickers hand over QUrl: it must be converted with toLocalFile(), or a
-    // path with a space arrives percent-encoded and every open fails.
-    Q_INVOKABLE void addFolder(const QUrl &url);
-    Q_INVOKABLE void removeFolder(const QString &dir);
+    Q_INVOKABLE void startIndexing();
+    // QML pickers and drops hand over QUrl: it must be converted with
+    // toLocalFile(), or a path with a space arrives percent-encoded and every
+    // open fails.
+    Q_INVOKABLE void importUrls(const QList<QUrl> &urls);
+    Q_INVOKABLE void removeSource(const QString &path);
+    Q_INVOKABLE void removeClip(int clipId);
     Q_INVOKABLE void loadSong(const QUrl &url);
     Q_INVOKABLE void applyPreset(const QString &name);
     Q_INVOKABLE void setParam(const QString &key, const QVariant &value);
@@ -129,11 +132,12 @@ public:
     Q_INVOKABLE void restoreDefaults();
     Q_INVOKABLE QString formatTime(double t) const;
     Q_INVOKABLE void openFolderDialog();
+    Q_INVOKABLE void openFilesDialog();
     Q_INVOKABLE void openSongDialog();
 
 
 signals:
-    void videoDirsChanged();
+    void sourcesChanged();
     void songChanged();
     void analysisChanged();
     void busyChanged();
@@ -148,6 +152,7 @@ signals:
     void editChanged();
     void volumeChanged();
     void folderDialogRequested();
+    void filesDialogRequested();
     void songDialogRequested();
 
 
@@ -178,7 +183,8 @@ private:
     TimelineModel *m_timeline = nullptr;
     Show *m_show = nullptr;
 
-    QStringList m_dirs;
+    QList<MediaSource> m_sources;
+    QSet<QString> m_hidden;
     QString m_song;
     Params m_params;
     Analysis m_analysis;
@@ -189,6 +195,9 @@ private:
     QString m_status;
     bool m_songBusy = false;
     bool m_pendingRegenerate = false;
+    // Set while a library change must not recut the edit: a clip removed from the
+    // bin leaves the ids alone, so only its shots need dropping.
+    bool m_keepEditOnIndex = false;
     // True when the current edit was cut before scoring finished; it is re-cut
     // once real scores land, unless the user already edited it by hand.
     bool m_editUnscored = false;

@@ -160,6 +160,12 @@ Studio::Studio(QObject *parent) : QObject(parent) {
         emit libraryChanged();
         emit filtersChanged();
         persist();
+        // A ✕ in the bin already took that clip's shots out of the strip and the
+        // ids did not move, so recutting here would throw away the hand edits.
+        if (m_keepEditOnIndex) {
+            m_keepEditOnIndex = false;
+            return;
+        }
         // The index was just rebuilt, and every clip id with it. An edit cut from
         // the old index no longer names the clips it was built from, so recut it
         // from the new one rather than leave segments pointing at other files.
@@ -225,15 +231,32 @@ void Studio::setVolume(double v) {
 // ---- session persistence -------------------------------------------------
 
 void Studio::restoreSession() {
-    // Params and folders are the document: restoring them is what makes the app
+    // Params and sources are the document: restoring them is what makes the app
     // reopen where the user left off.
     QFile pf(configDir() + QStringLiteral("/params.json"));
     if (pf.open(QIODevice::ReadOnly)) {
         const QJsonObject o = QJsonDocument::fromJson(pf.readAll()).object();
         m_params.applyMap(o.value("params").toObject().toVariantMap());
         setActiveLook(o.value("preset").toString(), QString());
-        const QJsonArray dirs = o.value("dirs").toArray();
-        for (const auto &d : dirs) m_dirs.append(d.toString());
+        if (o.contains("sources")) {
+            for (const auto &v : o.value("sources").toArray()) {
+                const QJsonObject so = v.toObject();
+                const QString path = so.value("path").toString();
+                if (path.isEmpty()) continue;
+                m_sources.append({path, so.value("dir").toBool()});
+            }
+        } else {
+            // A session file from before the bin: every entry was a folder.
+            for (const auto &d : o.value("dirs").toArray()) {
+                const QString path = d.toString();
+                if (path.isEmpty()) continue;
+                m_sources.append({path, true});
+            }
+        }
+        for (const auto &h : o.value("hidden").toArray()) {
+            const QString path = h.toString();
+            if (!path.isEmpty()) m_hidden.insert(path);
+        }
         const QString song = o.value("song").toString();
         if (!song.isEmpty() && QFileInfo::exists(song)) m_song = song;
         // Filters ride along so a reopened app shows the same pool.
@@ -243,8 +266,10 @@ void Studio::restoreSession() {
         emit paramsChanged();
         emit filtersChanged();
     }
-    if (!m_dirs.isEmpty()) {
-        m_lib->setDirs(m_dirs);
+    emit sourcesChanged();
+    if (!m_sources.isEmpty()) {
+        m_lib->setSources(m_sources);
+        m_lib->setHidden(m_hidden);
         m_lib->startIndex();
     }
     if (!m_song.isEmpty()) loadSongFile(m_song);
@@ -255,9 +280,21 @@ void Studio::persist() {
     QJsonObject o;
     o["params"] = QJsonObject::fromVariantMap(m_params.toMap());
     o["preset"] = m_activePreset;
-    QJsonArray dirs;
-    for (const QString &d : m_dirs) dirs.append(d);
-    o["dirs"] = dirs;
+    QJsonArray sources;
+    for (const MediaSource &s : m_sources) {
+        QJsonObject so;
+        so["path"] = s.path;
+        so["dir"] = s.isDir;
+        sources.append(so);
+    }
+    o["sources"] = sources;
+    QJsonArray hidden;
+    QStringList hiddenSorted;
+    hiddenSorted.reserve(m_hidden.size());
+    for (const QString &h : m_hidden) hiddenSorted.append(h);
+    hiddenSorted.sort();
+    for (const QString &h : hiddenSorted) hidden.append(h);
+    o["hidden"] = hidden;
     o["song"] = m_song;
     o["filters"] = QJsonObject::fromVariantMap(filtersToMap(m_filters));
     QFile f(configDir() + QStringLiteral("/params.json"));
@@ -470,79 +507,145 @@ void Studio::noteProgress(int done, int total) {
     emit progressChanged();
 }
 
-void Studio::startIndexing(const QStringList &dirs) {
-    // Keep the list the caller gave us. Validating here and discarding what does
-    // not stat *yet* is how a network mount (slow FUSE, GVFS) disappeared from
-    // the UI the moment it was added: the row was emitted, then removed.
-    QStringList clean;
-    for (const QString &d : dirs) {
-        if (d.isEmpty()) continue;
-        const QString abs = QFileInfo(d).absoluteFilePath();
-        if (!clean.contains(abs)) clean.append(abs);
+QVariantList Studio::sources() const {
+    QVariantList out;
+    for (const MediaSource &s : m_sources) {
+        const QString name = QFileInfo(s.path).fileName();
+        QVariantMap row;
+        row["path"] = s.path;
+        row["name"] = name.isEmpty() ? s.path : name;
+        row["isDir"] = s.isDir;
+        out.append(row);
     }
-    m_dirs = clean;
-    emit videoDirsChanged();
+    return out;
+}
 
-    if (m_dirs.isEmpty()) {
-        m_lib->setDirs(QStringList());
+void Studio::startIndexing() {
+    emit sourcesChanged();
+    if (m_sources.isEmpty()) {
+        // No footage at all: drop the index instead of scanning nothing.
+        m_lib->setSources({});
         m_lib->reset();
-        setStatus(QStringLiteral("Add a footage folder to begin"));
+        m_pendingRegenerate = false;
+        m_timeline->regenerate(QList<int>());   // nothing left to cut
+        setStatus(QStringLiteral("Import footage to begin"));
+        emit libraryChanged();
+        emit filtersChanged();
         persist();
         return;
     }
     // Every clip id is renumbered by the scan that follows: a show playing against
     // the old index would cut to the wrong files. Stop it and recut once indexed.
     if (m_show->playing()) m_show->stop();
-    m_lib->setDirs(m_dirs);
+    m_lib->setSources(m_sources);
+    m_lib->setHidden(m_hidden);
     m_lib->startIndex();
     persist();
 }
 
-void Studio::addFolder(const QUrl &url) {
-    const QString dir = localPathFor(url);
-    if (dir.isEmpty()) {
-        setStatus(QStringLiteral("That location has no path this app can read: %1").arg(url.toString()));
+void Studio::importUrls(const QList<QUrl> &urls) {
+    int dirs = 0;
+    int files = 0;
+    QString problem;
+    for (const QUrl &url : urls) {
+        const QString path = localPathFor(url);
+        if (path.isEmpty()) continue;
+        const QFileInfo fi(path);
+        if (!fi.exists()) {
+            // A remote mount that GVFS has not materialised yet, or a stale saved
+            // location: say so instead of doing nothing visible.
+            if (problem.isEmpty())
+                problem = QStringLiteral("Cannot open %1 — is the network drive mounted?").arg(path);
+            continue;
+        }
+        MediaSource src;
+        src.path = fi.absoluteFilePath();
+        src.isDir = fi.isDir();
+        if (!src.isDir) {
+            static const QStringList videoExts = {QStringLiteral("mp4"), QStringLiteral("webm"),
+                                                  QStringLiteral("mov"), QStringLiteral("mkv"),
+                                                  QStringLiteral("m4v")};
+            if (!videoExts.contains(fi.suffix().toLower())) {
+                if (problem.isEmpty()) problem = QStringLiteral("Not a video: %1").arg(src.path);
+                continue;
+            }
+        }
+        bool known = false;
+        for (const MediaSource &s : m_sources)
+            if (s.path == src.path) { known = true; break; }
+        if (known) continue;
+        m_sources.append(src);
+        // Importing footage that was removed earlier is how you get it back: a
+        // rescan honours the hidden list, an explicit import clears it.
+        if (src.isDir) {
+            const QString prefix = src.path + QLatin1Char('/');
+            for (auto it = m_hidden.begin(); it != m_hidden.end();) {
+                if (*it == src.path || it->startsWith(prefix)) it = m_hidden.erase(it);
+                else ++it;
+            }
+        } else {
+            m_hidden.remove(src.path);
+        }
+        if (src.isDir) dirs++;
+        else files++;
+    }
+    if (dirs == 0 && files == 0) {
+        if (!problem.isEmpty()) setStatus(problem);
+        else setStatus(QStringLiteral("Already in the project"));
+        // A re-drop of known footage means "scan it again", not "nothing happened".
+        startIndexing();
         return;
     }
-    const QFileInfo fi(dir);
-    if (!fi.exists() || !fi.isDir()) {
-        // A remote mount that GVFS has not materialised yet, or a stale saved
-        // location: say so instead of doing nothing visible.
-        setStatus(QStringLiteral("Cannot open %1 — is the network drive mounted?").arg(dir));
-        return;
-    }
-    const QString abs = fi.absoluteFilePath();
-    if (m_dirs.contains(abs)) {
-        // Already known: honour the click as "scan it again" instead of nothing.
-        setStatus(QStringLiteral("Rescanning %1").arg(fi.fileName()));
-        startIndexing(m_dirs);
-        return;
-    }
-    m_dirs.append(abs);
-    emit videoDirsChanged();
-    startIndexing(m_dirs);
+    QString msg;
+    if (dirs > 0 && files > 0)
+        msg = QStringLiteral("Imported %1 folder(s) and %2 file(s)").arg(dirs).arg(files);
+    else if (dirs > 0)
+        msg = QStringLiteral("Imported %1 folder(s)").arg(dirs);
+    else
+        msg = QStringLiteral("Imported %1 file(s)").arg(files);
+    setStatus(msg);
+    startIndexing();
 }
 
-void Studio::removeFolder(const QString &dir) {
-    const QString abs = QFileInfo(dir).absoluteFilePath();
-    if (!m_dirs.removeAll(abs) && !m_dirs.removeAll(dir)) return;
-    emit videoDirsChanged();
-    if (m_dirs.isEmpty()) {
-        // No footage at all: drop the index instead of scanning nothing.
-        m_lib->setDirs(QStringList());
-        m_lib->reset();
-        m_pendingRegenerate = false;
-        m_timeline->regenerate(QList<int>());   // nothing left to cut
-        setStatus(QStringLiteral("Add a footage folder to begin"));
-        emit libraryChanged();
-        emit filtersChanged();
-        persist();
-        return;
+void Studio::removeClip(int clipId) {
+    const Clip *c = m_lib->clipById(clipId);
+    if (!c) return;
+    const QString path = c->path;
+    const QString name = QFileInfo(path).fileName();
+    m_hidden.insert(path);
+    m_timeline->dropClips({clipId});        // shots using it leave the strip first
+    // The index keeps its ids here, so the edit needs no recut — and a recut would
+    // silently discard every other hand edit in it.
+    m_keepEditOnIndex = true;
+    m_lib->dropClips({path});               // then the row goes; emits indexed()
+    setStatus(QStringLiteral("Removed %1 from the project").arg(name));
+    persist();
+}
+
+void Studio::removeSource(const QString &path) {
+    const QString abs = QFileInfo(path).absoluteFilePath();
+    int at = -1;
+    for (int i = 0; i < m_sources.size(); i++)
+        if (m_sources[i].path == abs || m_sources[i].path == path) { at = i; break; }
+    if (at < 0) return;
+    const MediaSource gone = m_sources[at];
+    // Capture the clip ids that are about to disappear, before the index changes.
+    QList<int> dying;
+    for (const Clip &c : m_lib->clips()) {
+        const bool inside = gone.isDir
+            ? (c.path == gone.path || c.path.startsWith(gone.path + QLatin1Char('/')))
+            : (c.path == gone.path);
+        if (inside) dying.append(c.id);
     }
-    startIndexing(m_dirs);
+    m_timeline->dropClips(dying);
+    m_sources.removeAt(at);
+    setStatus(QStringLiteral("Removed %1 from the project").arg(QFileInfo(gone.path).fileName()));
+    startIndexing();
 }
 
 void Studio::openFolderDialog() { emit folderDialogRequested(); }
+
+void Studio::openFilesDialog() { emit filesDialogRequested(); }
 
 void Studio::openSongDialog() { emit songDialogRequested(); }
 
@@ -764,7 +867,7 @@ void Studio::generate() {
     // like the app doing nothing.
     if (!m_lib || m_lib->clips().isEmpty()) {
         m_pendingRegenerate = busy();
-        setStatus(m_pendingRegenerate ? QStringLiteral("Scanning footage…") : QStringLiteral("Add a footage folder first"));
+        setStatus(m_pendingRegenerate ? QStringLiteral("Scanning footage…") : QStringLiteral("Import footage first"));
         return;
     }
 

@@ -25,7 +25,7 @@ ApplicationWindow {
     function reopenWhichever() {
         if (reopenFootage) {
             reopenFootage = false
-            footageDialog.open()
+            projectDialog.open()
         } else if (reopenWelcome) {
             reopenWelcome = false
             welcome.open()
@@ -121,8 +121,8 @@ ApplicationWindow {
                 onClicked: studio.openSongDialog()
             }
             SmallButton {
-                text: "Footage…"
-                onClicked: studio.openFolderDialog()
+                text: "Project…"
+                onClicked: projectDialog.open()
             }
         }
 
@@ -338,23 +338,36 @@ ApplicationWindow {
     FolderDialog {
         id: folderDialog
         objectName: "folderDialog"
-        title: "Add a footage folder"
+        title: "Import a footage folder"
         onAccepted: {
-            studio.addFolder(selectedFolder)
+            studio.importUrls([selectedFolder])
             root.reopenWhichever()
         }
         onRejected: root.reopenWhichever()
     }
 
-    // One place to manage footage: every folder the library scans, with the
-    // remove button next to it. Adding lives here too, so there is never a
-    // second, staler copy of this list anywhere in the UI.
+    FileDialog {
+        id: footageFilesDialog
+        objectName: "footageFilesDialog"
+        title: "Import clips"
+        fileMode: FileDialog.OpenFiles
+        nameFilters: ["Video (*.mp4 *.webm *.mov *.mkv *.m4v)", "All files (*)"]
+        onAccepted: {
+            studio.importUrls(selectedFiles)
+            root.reopenWhichever()
+        }
+        onRejected: root.reopenWhichever()
+    }
+
+    // One place to manage the project's footage: every folder and loose file the
+    // library indexes, with a remove button next to it. Importing lives here too,
+    // so there is never a second, staler copy of this list anywhere in the UI.
     //
     // Plain Popup + Column on purpose: a Dialog with a custom contentItem gets
     // no content height from the layout and opens as an empty sliver.
     Popup {
-        id: footageDialog
-        objectName: "footageDialog"
+        id: projectDialog
+        objectName: "projectDialog"
         modal: true
         focus: true
         anchors.centerIn: Overlay.overlay
@@ -372,7 +385,7 @@ ApplicationWindow {
             spacing: 10
 
             Text {
-                text: "Footage folders"
+                text: "Project footage"
                 color: Theme.ink
                 font.pixelSize: 14
                 font.weight: Font.DemiBold
@@ -384,16 +397,18 @@ ApplicationWindow {
                 spacing: 6
 
                 Repeater {
-                    model: studio.videoDirs
+                    model: studio.sources
                     delegate: Item {
-                        required property string modelData
+                        id: srcRow
+                        objectName: "sourceRow"
+                        required property var modelData
                         width: dirList.width
-                        height: 34
+                        height: modelData.isDir ? 40 : 30
 
                         Rectangle {
                             anchors {
                                 left: parent.left
-                                right: removeBtn.left
+                                right: srcRemove.left
                                 rightMargin: 8
                                 top: parent.top
                                 bottom: parent.bottom
@@ -401,22 +416,38 @@ ApplicationWindow {
                             radius: 6
                             color: Theme.bg
                             border.color: Theme.line
-                            Text {
-                                anchors.fill: parent
-                                anchors.leftMargin: 10
-                                anchors.rightMargin: 10
-                                verticalAlignment: Text.AlignVCenter
-                                text: modelData
-                                color: Theme.ink
-                                font.pixelSize: 12
-                                elide: Text.ElideMiddle
+
+                            Column {
+                                anchors {
+                                    fill: parent
+                                    leftMargin: 10
+                                    rightMargin: 10
+                                    topMargin: srcRow.modelData.isDir ? 5 : 0
+                                    bottomMargin: srcRow.modelData.isDir ? 5 : 0
+                                }
+                                spacing: 1
+                                Text {
+                                    width: parent.width
+                                    text: srcRow.modelData.name
+                                    color: Theme.ink
+                                    font.pixelSize: 12
+                                    elide: Text.ElideMiddle
+                                }
+                                Text {
+                                    width: parent.width
+                                    visible: srcRow.modelData.isDir
+                                    text: srcRow.modelData.path
+                                    color: Theme.faint
+                                    font.pixelSize: 10
+                                    elide: Text.ElideMiddle
+                                }
                             }
                         }
                         SmallButton {
-                            id: removeBtn
+                            id: srcRemove
                             anchors { right: parent.right; verticalCenter: parent.verticalCenter }
                             text: "Remove"
-                            onClicked: studio.removeFolder(modelData)
+                            onClicked: studio.removeSource(srcRow.modelData.path)
                         }
                     }
                 }
@@ -424,8 +455,8 @@ ApplicationWindow {
 
             Text {
                 width: footageCol.width
-                visible: studio.videoDirs.length === 0
-                text: "No folders yet — the library is empty."
+                visible: studio.sources.length === 0
+                text: "Nothing imported yet."
                 color: Theme.faint
                 font.pixelSize: 12
                 wrapMode: Text.WordWrap
@@ -455,19 +486,32 @@ ApplicationWindow {
                     anchors { right: parent.right; verticalCenter: parent.verticalCenter }
                     spacing: 8
                     SmallButton {
-                        text: "Add folder…"
+                        text: "Files…"
                         onClicked: {
                             root.reopenFootage = true
-                            footageDialog.close()
+                            projectDialog.close()
+                            footageFilesDialog.open()
+                        }
+                    }
+                    SmallButton {
+                        text: "Folder…"
+                        onClicked: {
+                            root.reopenFootage = true
+                            projectDialog.close()
                             folderDialog.open()
                         }
+                    }
+                    SmallButton {
+                        text: "Rescan"
+                        enabled: studio.sources.length > 0
+                        onClicked: studio.startIndexing()
                     }
                     SmallButton {
                         text: "Done"
                         accent: true
                         onClicked: {
                             root.reopenFootage = false
-                            footageDialog.close()
+                            projectDialog.close()
                         }
                     }
                 }
@@ -491,6 +535,11 @@ ApplicationWindow {
             welcome.close()
             folderDialog.open()
         }
+        onFilesRequested: {
+            root.reopenWelcome = true
+            welcome.close()
+            footageFilesDialog.open()
+        }
     }
 
     Component.onCompleted: welcome.open()
@@ -498,7 +547,8 @@ ApplicationWindow {
     Connections {
         target: studio
         function onSongDialogRequested() { songDialog.open() }
-        function onFolderDialogRequested() { footageDialog.open() }
+        function onFolderDialogRequested() { projectDialog.open() }
+        function onFilesDialogRequested() { footageFilesDialog.open() }
     }
 
     // ---- keybindings: space toggles, arrows nudge ------------------------

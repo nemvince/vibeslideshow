@@ -12,6 +12,7 @@ Popup {
     id: intro
     signal songRequested()
     signal folderRequested()
+    signal filesRequested()
 
     modal: true
     focus: true
@@ -20,9 +21,9 @@ Popup {
     padding: 20
     closePolicy: Popup.CloseOnEscape
 
-    readonly property bool ready: studio.songPath.length > 0 && studio.videoDirs.length > 0
+    readonly property bool ready: studio.songPath.length > 0 && studio.sources.length > 0
     // A restored session: say so, and let one button carry the whole thing.
-    readonly property bool remembered: studio.songPath.length > 0 || studio.videoDirs.length > 0
+    readonly property bool remembered: studio.songPath.length > 0 || studio.sources.length > 0
 
     background: Rectangle {
         color: Theme.panel
@@ -46,7 +47,7 @@ Popup {
             wrapMode: Text.WordWrap
             text: intro.remembered
                   ? "This is what you had open last time. Change either and the app recuts as it goes."
-                  : "Pick a song and at least one folder of clips. Then the app finds the beat, "
+                  : "Pick a song and import some clips. Then the app finds the beat, "
                     + "scores the footage and cuts the first edit on its own — you can fix it shot by shot afterwards."
             color: Theme.dim
             font.pixelSize: 12
@@ -94,10 +95,17 @@ Popup {
                 font.pixelSize: 9
                 font.letterSpacing: 1
             }
-            SmallButton {
+            Row {
                 anchors { right: parent.right; verticalCenter: parent.verticalCenter }
-                text: "Add a folder…"
-                onClicked: intro.folderRequested()
+                spacing: 6
+                SmallButton {
+                    text: "Import files…"
+                    onClicked: intro.filesRequested()
+                }
+                SmallButton {
+                    text: "Folder…"
+                    onClicked: intro.folderRequested()
+                }
             }
         }
 
@@ -108,21 +116,21 @@ Popup {
 
             Text {
                 width: dirList.width
-                visible: studio.videoDirs.length === 0
-                text: "No folders yet."
+                visible: studio.sources.length === 0
+                text: "Nothing imported yet."
                 color: Theme.faint
                 font.pixelSize: 11
             }
             Repeater {
-                model: studio.videoDirs
+                model: studio.sources
                 delegate: Item {
-                    required property string modelData
+                    required property var modelData
                     width: dirList.width
                     height: 24
 
                     Text {
                         anchors { left: parent.left; right: drop.left; rightMargin: 8; verticalCenter: parent.verticalCenter }
-                        text: modelData
+                        text: modelData.name
                         color: Theme.ink
                         font.pixelSize: 11
                         elide: Text.ElideMiddle
@@ -142,7 +150,7 @@ Popup {
                         MouseArea {
                             anchors.fill: parent
                             cursorShape: Qt.PointingHandCursor
-                            onClicked: studio.removeFolder(modelData)
+                            onClicked: studio.removeSource(modelData.path)
                         }
                     }
                 }
@@ -156,8 +164,8 @@ Popup {
             Text {
                 anchors { left: parent.left; verticalCenter: parent.verticalCenter; right: row.left; rightMargin: 12 }
                 text: intro.ready ? "Ready."
-                                 : (studio.videoDirs.length === 0 ? "Add a folder of clips to begin."
-                                                                  : "Choose a song to begin.")
+                                 : (studio.sources.length === 0 ? "Import footage to begin."
+                                                                : "Choose a song to begin.")
                 color: intro.ready ? Theme.good : Theme.faint
                 font.pixelSize: 11
                 elide: Text.ElideRight

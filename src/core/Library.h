@@ -5,10 +5,11 @@
 #include <QStringList>
 #include <QVariantMap>
 #include <QHash>
+#include <QSet>
 
-// Scans video directories, indexes each file with ffprobe, pairs DJI .LRF
-// proxies, and computes the interest score (motion / colour / exposure /
-// variety) in the background.
+// Scans the project's sources (folders and loose files), indexes each video with
+// ffprobe, pairs DJI .LRF proxies, and computes the interest score (motion /
+// colour / exposure / variety) in the background.
 //
 // Threading: every member here is touched on the main thread only. The worker
 // threads run free functions over a snapshot of the file list and hand their
@@ -20,13 +21,19 @@ class Library : public QObject {
 public:
     explicit Library(QObject *parent = nullptr);
 
-    void setDirs(const QStringList &dirs) { m_dirs = dirs; }
-    QStringList dirs() const { return m_dirs; }
+    void setSources(const QList<MediaSource> &sources) { m_sources = sources; }
+    const QList<MediaSource> &sources() const { return m_sources; }
+    // Clips the user removed from the project: skipped by every scan, so they
+    // cannot come back on a rescan.
+    void setHidden(const QSet<QString> &paths) { m_hidden = paths; }
     const QList<Clip> &clips() const { return m_clips; }
 
     void startIndex();
-    // Drop everything indexed (no folders configured any more).
+    // Drop everything indexed (no sources configured any more).
     void reset();
+    // Remove already-indexed clips by path without renumbering the survivors:
+    // the timeline still holds segments that point at the surviving ids.
+    void dropClips(const QSet<QString> &paths);
     bool busy() const { return m_busy; }
     int scoreDone() const { return m_scoreDone; }
     int scoreTotal() const { return m_scoreTotal; }
@@ -86,12 +93,15 @@ private:
     void applyScores(quint64 gen, const QList<Score> &scores);
     void restartIfPending();
     void setBusyInternal(bool b);
+    // The human-readable source list used in failure messages.
+    QString sourcesLabel() const;
 
-    QStringList m_dirs;
+    QList<MediaSource> m_sources;
+    QSet<QString> m_hidden;
     QList<Clip> m_clips;
     QHash<int, int> m_indexById;
     bool m_busy = false;
-    // setDirs() + startIndex() while a pass is running: re-scan as soon as the
+    // setSources() + startIndex() while a pass is running: re-scan as soon as the
     // current pass is out of the way instead of dropping the new folders.
     bool m_restart = false;
     int m_scoreDone = 0;

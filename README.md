@@ -57,26 +57,32 @@ the code looks next to the binary first (and honours `VIBESLIDESHOW_TOOLS_DIR`).
 ## Using it
 
 1. **Every launch** starts with one setup popup that asks for the two things the
-   app cannot work without: a song, and at least one folder of clips. A remembered
-   song and folder are already in it, so a returning user just presses
+   app cannot work without: a song, and some footage. A remembered song and
+   footage are already in it, so a returning user just presses
    **Continue**; "Not now" leaves the restored session as it was. Both rows go
    straight to the native picker and the popup comes back afterwards. Everything
    after that is automatic — the app reads the track, scores the footage and cuts
    the first edit without another click.
-2. **Footage…** in the top bar lists the folders the library scans: add folders,
-   remove the ones you are done with. Every video in them (`mp4`, `webm`, `mov`,
-   `mkv`, `m4v`) is indexed and scored; DJI `.LRF` proxies are paired
+2. **Footage** comes in three ways: single files, several files at once, or a
+   whole folder. Use **Import…** at the top of the bin (or **Project…** in the top
+   bar), or drag files and folders from the file manager straight onto the bin.
+   Folders are walked recursively; every video in them (`mp4`, `webm`, `mov`,
+   `mkv`, `m4v`) is indexed and scored, DJI `.LRF` proxies are paired
    automatically for fast cuts and never indexed as clips, and a clip copied into
    several date folders is only indexed once. Network shares mounted in your file
    manager (SMB/SFTP/NFS) work as long as you pick the mounted folder. The edit
    is generated as soon as the scan finds clips, and re-cut once the scores are
-   in — and re-cut again if the folders change, since a rescan renumbers the
+   in — and re-cut again if the footage list changes, since a rescan renumbers the
    clips the edit names.
 3. **Song…** loads a track. The app finds its tempo, energy curve, sections
    (chill / build / loud / drop) and any stutter it already has, then cuts the
    first edit for you.
-4. The rail on the left shows every clip with a score; clips the filters exclude
-   stay visible but dimmed.
+4. **The bin** on the left is the project's flat clip list: a search box filters
+   it by name, hovering a row shows a ✕ that removes that one clip, and clips the
+   filters exclude stay visible but dimmed. Removing footage — a clip, or a whole
+   import via **Project…** — takes its shots out of the edit and hands their time
+   to the last shot, so the song stays covered; a removed clip stays out on later
+   rescans until you import it again.
 5. The panel on the right is a set of tools, each named after what it does to the
    video and each saying its effect in words instead of a raw number:
 
