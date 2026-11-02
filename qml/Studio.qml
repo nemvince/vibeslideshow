@@ -14,9 +14,20 @@ ApplicationWindow {
     title: "vibeslideshow"
     color: palette.window
 
-    // Set while the native folder picker is open on top of the footage menu, so the
-    // list comes back afterwards instead of dropping the user out of the flow.
+    // Set while a native picker is open on top of one of the popups, so that popup
+    // comes back afterwards instead of dropping the user out of the flow.
     property bool reopenFootage: false
+    property bool reopenWelcome: false
+
+    function reopenWhichever() {
+        if (reopenFootage) {
+            reopenFootage = false
+            footageDialog.open()
+        } else if (reopenWelcome) {
+            reopenWelcome = false
+            welcome.open()
+        }
+    }
 
 
     PanelBackground { anchors.fill: parent }
@@ -76,11 +87,10 @@ ApplicationWindow {
 
             Rectangle { implicitWidth: 1; implicitHeight: 20; color: Theme.line; visible: studio.status.length > 0 }
 
-            // While a pass runs this slot carries the live progress + ETA;
-            // otherwise it carries whatever the app last said.
+            // Messages only: live progress has its own strip under this bar.
             Text {
-                text: studio.busy ? studio.progressLabel : studio.status
-                color: studio.busy ? Theme.dim : Theme.faint
+                text: studio.status
+                color: Theme.faint
                 font.pixelSize: 11
                 elide: Text.ElideRight
                 Layout.maximumWidth: 300
@@ -108,20 +118,25 @@ ApplicationWindow {
         }
 
         Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: Theme.line }
+    }
 
-        // Indexing progress: always drawn while the library is working, so a
-        // slow scan has something moving on screen from the first second. It
-        // sits on the top bar's own bottom edge; nothing reflows when it appears.
-        ProgressLine {
-            anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
-            active: studio.busy
-            value: studio.progress
-        }
+    // ---- progress --------------------------------------------------------
+    // One dedicated surface for whatever pass is running. It folds to zero height
+    // when the app is idle, so the workspace only gives up room while it is
+    // actually doing something, and the top bar keeps carrying plain messages.
+    WorkStrip {
+        id: workStrip
+        objectName: "workStrip"
+        anchors { top: topBar.bottom; left: parent.left; right: parent.right }
+        active: studio.busy
+        title: studio.phase
+        detail: studio.progressLabel
+        value: studio.progress
     }
 
     // ---- main three-pane body --------------------------------------------
     Item {
-        anchors { top: topBar.bottom; left: parent.left; right: parent.right; bottom: transport.top }
+        anchors { top: workStrip.bottom; left: parent.left; right: parent.right; bottom: transport.top }
 
         // Left: library rail with real thumbnails and score badges.
         LibraryRail {
@@ -163,7 +178,13 @@ ApplicationWindow {
                 spacing: 8
 
                 Rectangle {
+                    id: playBtn
                     implicitWidth: 36; implicitHeight: 36; radius: 18
+                    // Locked while the library or the song is being (re)built:
+                    // there is no valid edit to start or stop in that window, and
+                    // nothing to play before a song has been read.
+                    property bool usable: studio.workspaceEnabled && studio.songAnalysed
+                    opacity: usable ? 1 : 0.45
                     color: showCtl.playing ? Theme.accent : Theme.panelHi
                     border.color: showCtl.playing ? Theme.accent : Theme.line
                     Text {
@@ -172,7 +193,12 @@ ApplicationWindow {
                         color: Theme.ink
                         font.pixelSize: 13
                     }
-                    MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: studio.playPause() }
+                    MouseArea {
+                        anchors.fill: parent
+                        enabled: playBtn.usable
+                        cursorShape: playBtn.usable ? Qt.PointingHandCursor : Qt.ArrowCursor
+                        onClicked: studio.playPause()
+                    }
                 }
 
                 Text {
@@ -190,14 +216,15 @@ ApplicationWindow {
 
                 Rectangle { Layout.preferredWidth: 1; implicitHeight: 18; color: Theme.line; Layout.leftMargin: 2; Layout.rightMargin: 2 }
 
-                // Edit actions, in the order you reach for them.
-                IconButton { glyph: "\u2212"; tip: "Shorten"; enabled: timeline.selected >= 0; onClicked: timeline.shorten() }
-                IconButton { glyph: "+"; tip: "Lengthen"; enabled: timeline.selected >= 0; onClicked: timeline.lengthen() }
-                IconButton { glyph: "\u2702"; tip: "Chop in half"; enabled: timeline.selected >= 0; onClicked: timeline.chop() }
-                IconButton { glyph: "\u25CE"; tip: "New in-point"; enabled: timeline.selected >= 0; onClicked: timeline.rerollIn() }
-                IconButton { glyph: "\u21C4"; tip: "Swap clip"; enabled: timeline.selected >= 0; onClicked: timeline.swap() }
-                IconButton { glyph: "\u2715"; tip: "Delete segment"; enabled: timeline.selected >= 0; onClicked: timeline.remove() }
-                IconButton { glyph: "\u27F3"; tip: "Re-roll every in-point"; enabled: timeline.count > 0; onClicked: timeline.rerollAll() }
+                // Edit actions, in the order you reach for them. All of them need a
+                // settled library: a rescan renumbers clip ids under the edit.
+                IconButton { glyph: "\u2212"; tip: "Shorten"; enabled: studio.workspaceEnabled && timeline.selected >= 0; onClicked: timeline.shorten() }
+                IconButton { glyph: "+"; tip: "Lengthen"; enabled: studio.workspaceEnabled && timeline.selected >= 0; onClicked: timeline.lengthen() }
+                IconButton { glyph: "\u2702"; tip: "Chop in half"; enabled: studio.workspaceEnabled && timeline.selected >= 0; onClicked: timeline.chop() }
+                IconButton { glyph: "\u25CE"; tip: "New in-point"; enabled: studio.workspaceEnabled && timeline.selected >= 0; onClicked: timeline.rerollIn() }
+                IconButton { glyph: "\u21C4"; tip: "Swap clip"; enabled: studio.workspaceEnabled && timeline.selected >= 0; onClicked: timeline.swap() }
+                IconButton { glyph: "\u2715"; tip: "Delete segment"; enabled: studio.workspaceEnabled && timeline.selected >= 0; onClicked: timeline.remove() }
+                IconButton { glyph: "\u27F3"; tip: "Re-roll every in-point"; enabled: studio.workspaceEnabled && timeline.count > 0; onClicked: timeline.rerollAll() }
 
                 Text {
                     text: timeline.selected >= 0 ? timeline.selectionInfo : timeline.stats
@@ -238,7 +265,9 @@ ApplicationWindow {
                     enabled: !studio.busy && studio.songAnalysed
                     onClicked: studio.generate()
                 }
-                SmallButton { text: "Stop"; flat: true; onClicked: studio.stopShow() }
+                // Stop stays usable even mid-pass: a scan can start while a show
+                // is already playing, and the music must always be stoppable.
+                SmallButton { text: "Stop"; flat: true; enabled: showCtl.ready; onClicked: studio.stopShow() }
             }
 
             // The edit itself: segments, playhead and scrubbing in one surface.
@@ -258,7 +287,11 @@ ApplicationWindow {
         objectName: "songDialog"
         title: "Choose a song"
         nameFilters: ["Audio (*.mp3 *.flac *.wav *.m4a *.ogg *.opus)", "All files (*)"]
-        onAccepted: studio.loadSong(selectedFile)
+        onAccepted: {
+            studio.loadSong(selectedFile)
+            root.reopenWhichever()
+        }
+        onRejected: root.reopenWhichever()
     }
 
     FolderDialog {
@@ -267,9 +300,9 @@ ApplicationWindow {
         title: "Add a footage folder"
         onAccepted: {
             studio.addFolder(selectedFolder)
-            if (root.reopenFootage) footageDialog.open()
+            root.reopenWhichever()
         }
-        onRejected: if (root.reopenFootage) footageDialog.open()
+        onRejected: root.reopenWhichever()
     }
 
     // One place to manage footage: every folder the library scans, with the
@@ -401,6 +434,28 @@ ApplicationWindow {
         }
     }
 
+    // First start: with no song and no folder there is nothing to show and nothing
+    // to cut, so the two things the app needs are asked for once, in one place.
+    // It never opens again on its own once either has been provided.
+    FirstRun {
+        id: welcome
+        objectName: "firstRun"
+        onSongRequested: {
+            root.reopenWelcome = true
+            welcome.close()
+            songDialog.open()
+        }
+        onFolderRequested: {
+            root.reopenWelcome = true
+            welcome.close()
+            folderDialog.open()
+        }
+    }
+
+    Component.onCompleted: {
+        if (!studio.songPath.length && studio.videoDirs.length === 0) welcome.open()
+    }
+
     Connections {
         target: studio
         function onSongDialogRequested() { songDialog.open() }
@@ -418,19 +473,19 @@ ApplicationWindow {
 
     Shortcut {
         sequence: "Space"
-        enabled: !root.typingText
+        enabled: !root.typingText && studio.workspaceEnabled && studio.songAnalysed
         onActivated: studio.playPause()
     }
     // Seeking clamps to the edit's own length: mpv reports 0 until it has opened
     // the file, and Math.min(0, …) would send every "forward" press to the start.
     Shortcut {
         sequence: "Right"
-        enabled: !root.typingText
+        enabled: !root.typingText && studio.workspaceEnabled
         onActivated: studio.seek(Math.min(tl.duration, showCtl.position + 5))
     }
     Shortcut {
         sequence: "Left"
-        enabled: !root.typingText
+        enabled: !root.typingText && studio.workspaceEnabled
         onActivated: studio.seek(Math.max(0, showCtl.position - 5))
     }
     Shortcut {

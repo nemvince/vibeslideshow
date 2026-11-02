@@ -33,6 +33,12 @@ class Studio : public QObject {
     Q_PROPERTY(double progress READ progress NOTIFY progressChanged)
     // "Scored 40 of 126 · ~3 min left" while a pass runs, empty otherwise.
     Q_PROPERTY(QString progressLabel READ progressLabel NOTIFY progressChanged)
+    // What the app is doing right now, in two words: "Scanning footage",
+    // "Scoring clips", "Listening to the song". Empty when it is idle.
+    Q_PROPERTY(QString phase READ phase NOTIFY progressChanged)
+    // False while a pass makes the workspace unsafe to touch: the library is
+    // being renumbered under the open edit, or there is no analysed song yet.
+    Q_PROPERTY(bool workspaceEnabled READ workspaceEnabled NOTIFY progressChanged)
     Q_PROPERTY(QVariantList presets READ presets NOTIFY presetsChanged)
     Q_PROPERTY(QVariantList advanced READ advanced NOTIFY advancedChanged)
     Q_PROPERTY(QVariantList profiles READ profiles NOTIFY profilesChanged)
@@ -66,6 +72,8 @@ public:
     int scoreTotal() const;
     double progress() const;
     QString progressLabel() const;
+    QString phase() const;
+    bool workspaceEnabled() const;
     QVariantList presets() const;
     QVariantList advanced() const;
     QVariantList profiles() const;

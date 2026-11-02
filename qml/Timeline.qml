@@ -8,6 +8,9 @@ import Vibes 1.0
 Item {
     id: tl
     implicitHeight: 108
+    // Scrubbing and segment picking are off while the library is being rebuilt or
+    // the song is still being read: the edit on screen is about to be replaced.
+    enabled: studio.workspaceEnabled
 
     // Prefer the player's own duration, but never depend on it: while mpv is still
     // opening the file it reports 0, and every segment would be screen-wide.
@@ -17,6 +20,9 @@ Item {
         return 1
     }
     readonly property real progressFrac: Math.max(0, Math.min(1, showCtl.position / duration))
+    // Before a song is loaded `duration` is the 1-second fallback, and every ruler
+    // label would read 0:00. Say nothing rather than something wrong.
+    readonly property bool knownDuration: showCtl.duration > 0 || timeline.songDuration > 0
     readonly property int rulerHeight: 18
 
     function seekTo(x) {
@@ -47,7 +53,7 @@ Item {
 
                     Rectangle { width: 1; height: 5; y: ruler.height - height; color: Theme.line }
                     Text {
-                        visible: index > 0 && index < 6
+                        visible: index > 0 && index < 6 && tl.knownDuration
                         x: 4
                         text: studio.formatTime(index / 6 * tl.duration)
                         color: Theme.faint
@@ -172,10 +178,20 @@ Item {
 
         Text {
             anchors.centerIn: parent
-            visible: timeline.count === 0
-            text: studio.busy ? studio.progressLabel : "Pick a song and a look, then press Generate"
+            visible: timeline.count === 0 && tl.enabled
+            text: "Pick a song and a look, then press Generate"
             color: Theme.faint
             font.pixelSize: 12
+        }
+
+        // The same dimming the rest of the workspace gets while a pass runs, so a
+        // disabled strip cannot be mistaken for a broken one.
+        Rectangle {
+            id: lockVeil
+            anchors.fill: parent
+            visible: !tl.enabled
+            color: Theme.bg
+            opacity: 0.55
         }
     }
 }

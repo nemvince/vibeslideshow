@@ -56,32 +56,50 @@ the code looks next to the binary first (and honours `VIBESLIDESHOW_TOOLS_DIR`).
 
 ## Using it
 
-1. **Footage…** in the top bar lists the folders the library scans: add folders,
+1. **First start** opens one setup popup that asks for the two things the app
+   cannot work without: a song, and at least one folder of clips. Both rows take
+   you straight to the native picker and the popup comes back afterwards; once
+   both are there, **Start** gets out of the way. Everything after that is
+   automatic — the app reads the track, scores the footage and cuts the first
+   edit without another click. The popup only appears when there is nothing to
+   restore, and "Not now" is always available.
+2. **Footage…** in the top bar lists the folders the library scans: add folders,
    remove the ones you are done with. Every video in them (`mp4`, `webm`, `mov`,
    `mkv`, `m4v`) is indexed and scored; DJI `.LRF` proxies are paired
    automatically for fast cuts and never indexed as clips, and a clip copied into
    several date folders is only indexed once. Network shares mounted in your file
-   manager (SMB/SFTP/NFS) work as long as you pick the mounted folder.
-   Probing and scoring run in parallel and the top bar shows progress with an
-   ETA; the edit is generated as soon as the scan finds clips, and re-cut once
-   the scores are in.
-2. **Song…** loads a track. The app finds its tempo, energy curve, sections
+   manager (SMB/SFTP/NFS) work as long as you pick the mounted folder. The edit
+   is generated as soon as the scan finds clips, and re-cut once the scores are
+   in — and re-cut again if the folders change, since a rescan renumbers the
+   clips the edit names.
+3. **Song…** loads a track. The app finds its tempo, energy curve, sections
    (chill / build / loud / drop) and any stutter it already has, then cuts the
    first edit for you.
-3. The rail on the left shows every clip with a score; clips the filters exclude
+4. The rail on the left shows every clip with a score; clips the filters exclude
    stay visible but dimmed.
-4. The panel on the right is the settings panel, in collapsible sections: **Look**
+5. The panel on the right is the settings panel, in collapsible sections: **Look**
    (the one preset manager: built-in looks, saved looks with a delete button, and
    saving under a name), **Footage** (the filters — best
    clips only, keep the frame moving, skip dark clips, one day, daytime hours,
    skip some dates), and **Advanced** (a dozen controls that mean something;
    thresholds and windows the presets tune stay out of the UI).
-5. The strip at the bottom is the edit. Select a segment to shorten, lengthen,
+6. The strip at the bottom is the edit. Select a segment to shorten, lengthen,
    chop, re-roll its in-point, swap its clip or delete it. Click a clip in the
    rail to drop it in at the playhead.
 
+While any pass runs, a strip under the top bar says what it is doing and how far
+it has got (phase, counts, ETA, percentage, and a travelling bar whenever there is
+no total to measure yet). It folds away to nothing when the app is idle, so it
+never shifts the layout for no reason, and the top bar keeps carrying plain
+messages. Controls that cannot be trusted mid-pass are visibly disabled rather
+than silently wrong: while the library is being rebuilt or the song is still
+being read, playback, the edit actions, timeline scrubbing, the rail's
+drop-in-a-clip click and the keyboard shortcuts are all off. Scoring only fills in
+numbers, so the workspace stays usable while it runs.
+
 Space plays and pauses, arrow keys nudge ±5 s, `Ctrl+G` regenerates the edit,
-`Esc` stops. The keys stand down while a text field has focus.
+`Esc` stops. The keys stand down while a text field has focus, and while the
+workspace is locked.
 
 ## How it works
 

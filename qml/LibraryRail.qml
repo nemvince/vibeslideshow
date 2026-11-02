@@ -116,7 +116,9 @@ Rectangle {
                 HoverHandler { id: hover }
                 MouseArea {
                     anchors.fill: parent
-                    cursorShape: Qt.PointingHandCursor
+                    // Dropping a clip in needs a settled edit to drop it into.
+                    enabled: studio.workspaceEnabled
+                    cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
                     // Click a clip to drop it into the show at the playhead.
                     onClicked: studio.newInPointAt(model.clipId, showCtl.position)
                 }

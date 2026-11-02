@@ -61,11 +61,43 @@ Item {
 
     Component.onCompleted: showCtl.attachSurfaces(surfA, surfB)
 
+    // Locked: the library is being rebuilt or the song is still being analysed, so
+    // nothing on the stage can be trusted — say so instead of showing a dead frame.
+    readonly property bool locked: studio.busy && !studio.workspaceEnabled
+
+    Rectangle {
+        anchors.fill: parent
+        color: Theme.bg
+        opacity: 0.82
+        visible: stage.locked
+    }
+    Column {
+        anchors.centerIn: parent
+        width: Math.min(parent.width - 60, 420)
+        spacing: 8
+        visible: stage.locked
+        Text {
+            anchors.horizontalCenter: parent.horizontalCenter
+            text: studio.phase
+            color: Theme.ink
+            font.pixelSize: 17
+        }
+        Text {
+            anchors.horizontalCenter: parent.horizontalCenter
+            width: parent.width
+            horizontalAlignment: Text.AlignHCenter
+            wrapMode: Text.WordWrap
+            text: studio.progressLabel
+            color: Theme.faint
+            font.pixelSize: 12
+        }
+    }
+
     // Empty state.
     Column {
         anchors.centerIn: parent
         spacing: 12
-        visible: !showCtl.ready
+        visible: !showCtl.ready && !stage.locked
         Text {
             anchors.horizontalCenter: parent.horizontalCenter
             text: studio.songPath.length ? "Ready when you are" : "Load a song to begin"
@@ -74,7 +106,7 @@ Item {
         }
         Text {
             anchors.horizontalCenter: parent.horizontalCenter
-            text: studio.busy ? studio.status : "Pick a look on the right, then press play."
+            text: "Pick a look on the right, then press play."
             color: Theme.faint
             font.pixelSize: 13
         }
@@ -83,7 +115,7 @@ Item {
     // Nothing playing: a quiet cue, so a black stage is not mistaken for a fault.
     Text {
         anchors.centerIn: parent
-        visible: showCtl.ready && !showCtl.playing
+        visible: showCtl.ready && !showCtl.playing && !stage.locked
         text: "space to play"
         color: Theme.faint
         opacity: 0.7

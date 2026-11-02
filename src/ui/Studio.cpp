@@ -156,6 +156,10 @@ Studio::Studio(QObject *parent) : QObject(parent) {
         emit libraryChanged();
         emit filtersChanged();
         persist();
+        // The index was just rebuilt, and every clip id with it. An edit cut from
+        // the old index no longer names the clips it was built from, so recut it
+        // from the new one rather than leave segments pointing at other files.
+        if (m_timeline->hasTimeline() && !m_timeline->segments().isEmpty()) generate();
     });
     connect(m_lib, &Library::scanProgress, this, [this](int done, int total) {
         // A progress event can still be queued when the pass finishes; do not let
@@ -191,7 +195,8 @@ Studio::Studio(QObject *parent) : QObject(parent) {
     connect(m_timeline, &TimelineModel::changed, this, [this]() {
         syncScheduler();
         emit editChanged();
-        if (!m_timeline->hasTimeline()) return;
+        // Always forward it, empty included: when the last footage folder is
+        // removed the player has to let go of the edit it is holding.
         m_show->setEdit(m_timeline->segments(), m_timeline->cuts(), m_timeline->fades());
     });
     connect(m_timeline, &TimelineModel::countChanged, this, [this]() { emit editChanged(); });
@@ -236,7 +241,6 @@ void Studio::restoreSession() {
         emit filtersChanged();
     }
     if (!m_dirs.isEmpty()) {
-        setStatus(QStringLiteral("Indexing %1 folder(s)…").arg(m_dirs.size()));
         m_lib->setDirs(m_dirs);
         m_lib->startIndex();
     }
@@ -388,18 +392,18 @@ double Studio::progress() const {
 }
 
 QString Studio::progressLabel() const {
-    if (!m_lib || !busy()) return {};
+    // Detail only: the phase title above it already says what is happening.
+    if (m_songBusy) return QStringLiteral("Reading the track and finding its beats");
+    if (!m_lib || !m_lib->busy()) return {};
     if (m_lib->scoreTotal() > 0) {
         // Whole clips finish slowly on a network share; until the first one lands
         // the percentage is the only honest number.
         if (m_lib->scoreDone() > 0)
-            return QStringLiteral("Scoring %1 of %2%3")
+            return QStringLiteral("%1 of %2 clips%3")
                 .arg(m_lib->scoreDone()).arg(m_lib->scoreTotal())
                 .arg(etaSuffix(m_lib->scoreDone(), m_lib->scoreTotal()));
-        // Percentage first: the status slot elides, and the number matters more
-        // than the tail of the ETA.
         const int pct = int(std::lround(m_lib->scoreFraction() * 100));
-        return QStringLiteral("Scoring clips · %1%2")
+        return QStringLiteral("%1% of the sampled frames%2")
             .arg(pct)
             .arg(etaFraction(m_lib->scoreFraction()));
     }
@@ -407,7 +411,22 @@ QString Studio::progressLabel() const {
         return QStringLiteral("Found %1 videos · probed %2%3")
             .arg(m_lib->scanTotal()).arg(m_lib->scanDone())
             .arg(etaSuffix(m_lib->scanDone(), m_lib->scanTotal()));
-    return m_status.isEmpty() ? QStringLiteral("Working…") : m_status;
+    return QStringLiteral("Looking through the folders…");
+}
+
+QString Studio::phase() const {
+    if (m_songBusy) return QStringLiteral("Listening to the song");
+    if (!m_lib || !m_lib->busy()) return {};
+    if (m_lib->scoreTotal() > 0) return QStringLiteral("Scoring clips");
+    return QStringLiteral("Scanning footage");
+}
+
+bool Studio::workspaceEnabled() const {
+    // A rescan renumbers clip ids while the open edit still holds the old ones,
+    // so nothing may play or be edited until the index has settled. Scoring only
+    // fills in numbers the ids do not depend on: the show stays usable.
+    if (m_songBusy) return false;
+    return !(m_lib && m_lib->busy() && m_lib->scoreTotal() == 0);
 }
 
 QString Studio::etaFraction(double frac) const {
@@ -465,7 +484,9 @@ void Studio::startIndexing(const QStringList &dirs) {
         persist();
         return;
     }
-    setStatus(QStringLiteral("Indexing %1 folder(s)…").arg(m_dirs.size()));
+    // Every clip id is renumbered by the scan that follows: a show playing against
+    // the old index would cut to the wrong files. Stop it and recut once indexed.
+    if (m_show->playing()) m_show->stop();
     m_lib->setDirs(m_dirs);
     m_lib->startIndex();
     persist();
@@ -505,6 +526,7 @@ void Studio::removeFolder(const QString &dir) {
         m_lib->setDirs(QStringList());
         m_lib->reset();
         m_pendingRegenerate = false;
+        m_timeline->regenerate(QList<int>());   // nothing left to cut
         setStatus(QStringLiteral("Add a footage folder to begin"));
         emit libraryChanged();
         emit filtersChanged();
@@ -572,7 +594,8 @@ void Studio::loadSongFile(const QString &path) {
     emit songChanged();
     emit analysisChanged();
     setSongBusy(true);
-    setStatus(QStringLiteral("Listening to the song…"));
+    // No status message for the pass itself: the progress strip is the single
+    // place that says what is happening. This slot is for outcomes.
 
     // Decoding, beat detection and the duration probe all shell out; none of it
     // may run on the UI thread or the window freezes for the length of the song.

@@ -18,5 +18,7 @@
         <file>qml/IconButton.qml</file>
         <file>qml/Timeline.qml</file>
         <file>qml/ToggleSwitch.qml</file>
+        <file>qml/WorkStrip.qml</file>
+        <file>qml/FirstRun.qml</file>
     </qresource>
 </RCC>
