@@ -143,6 +143,10 @@ void Show::play() {
     int pause = 0;
     mpv_set_property(m_audio, "pause", MPV_FORMAT_FLAG, &pause);
     m_playing = true;
+    m_waiting = false;
+    m_resync = false;
+    m_lastFrameTs = -1;
+    m_sinceFrameAdvance.restart();
     emit playingChanged();
     m_tick.start();
     if (m_currentClip < 0) {
@@ -163,6 +167,39 @@ void Show::setBuffering(bool b) {
     emit bufferingChanged();
 }
 
+void Show::beginWait() {
+    if (!m_playing || m_waiting) return;
+    m_waiting = true;
+    m_resync = false;
+    m_sinceWaitStart.restart();
+    setBuffering(true);
+    // Hold the song at the position the picture is stuck on. Running the music
+    // on would only widen the gap and make the resume a jump.
+    if (m_audio) {
+        int one = 1;
+        mpv_set_property(m_audio, "pause", MPV_FORMAT_FLAG, &one);
+    }
+    if (MpvItem *front = m_aIsFront ? m_a : m_b) front->setPaused(true);
+}
+
+void Show::resumeFromWait() {
+    if (!m_waiting) return;
+    m_waiting = false;
+    m_resync = false;
+    setBuffering(false);
+    if (m_audio) {
+        int zero = 0;
+        mpv_set_property(m_audio, "pause", MPV_FORMAT_FLAG, &zero);
+    }
+    if (MpvItem *front = m_aIsFront ? m_a : m_b) front->setPaused(false);
+    // Give the freshly resumed clip a moment before the drift guard touches it.
+    m_sinceCut.restart();
+    m_sinceCorrection.invalidate();
+    m_seekStreak = 0;
+    m_lastFrameTs = -1;
+    m_sinceFrameAdvance.restart();
+}
+
 void Show::pause() {
     if (m_audio) {
         int pause = 1;
@@ -170,6 +207,8 @@ void Show::pause() {
     }
     m_playing = false;
     m_tick.stop();
+    m_waiting = false;
+    m_resync = false;
     setBuffering(false);
     if (m_a) m_a->setPaused(true);
     if (m_b) m_b->setPaused(true);
@@ -207,9 +246,14 @@ void Show::seek(double t) {
     for (int i = 0; i < m_cuts.size(); i++)
         if (m_cuts[i] <= t + 1e-6) idx = i;
     const bool wasPlaying = m_playing;
+    m_waiting = false;
+    m_resync = false;
     if (wasPlaying) pause();
     startSegment(idx, t);
-    if (wasPlaying) play();
+    // Resume through the same gate a stall uses: the song only starts once the
+    // picture at the new position has something to show, so a seek cannot leave
+    // sound ahead of image.
+    if (wasPlaying) { play(); beginWait(); }
 }
 
 void Show::cueSegment(int index) {
@@ -223,7 +267,7 @@ void Show::cueSegment(int index) {
         mpv_command(m_audio, cmd);
     }
     startSegment(index, m_cuts[index]);
-    if (wasPlaying) play();
+    if (wasPlaying) { play(); beginWait(); }
 }
 
 void Show::startSegment(int idx, double songTime) {
@@ -314,6 +358,43 @@ void Show::tick() {
     if (m_playing && m_a && m_b) (m_aIsFront ? m_a : m_b)->requestFrame();
     if (!m_playing || m_segs.isEmpty()) return;
 
+    MpvItem *front = m_aIsFront ? m_a : m_b;
+    if (!front) return;
+
+    // ---- holding for the file -------------------------------------------
+    // The song is paused at the position the picture stalled on. Wait until the
+    // surface has enough buffered to play *through the rest of this segment*,
+    // re-syncing the picture with one seek first, then let both continue
+    // together. Resuming early would only stall again a few frames later.
+    if (m_waiting) {
+        const double want = expectedVideoTime(m_cutIdx, m_pos);
+        if (!m_resync && std::fabs(front->frameTime() - want) > 0.35) {
+            front->seekExact(want);
+            m_resync = true;
+            m_sinceWaitStart.restart();
+            return;
+        }
+        const double segEnd = (m_cutIdx + 1 < m_cuts.size()) ? m_cuts[m_cutIdx + 1] : m_dur;
+        const double leftInSegment = std::max(0.0, segEnd - m_pos);
+        // Enough for a smooth minute of playback, or everything the segment has
+        // left, whichever is smaller.
+        // Keep the bar below what the demuxer is allowed to read ahead: asking
+        // for more buffered media than the cache can hold waits forever.
+        const double need = std::min(1.0, leftInSegment + 0.1);
+        const bool ready = front->bufferedSecs() >= need;
+        // If mpv never reports a cache size, fall back to "it has had a moment".
+        const double waited = m_sinceWaitStart.isValid() ? m_sinceWaitStart.elapsed() : 0;
+        const bool blind = !front->hasBufferInfo() && waited > 1500;
+        // Safety net: a dead share must not freeze the app with no way back. Play
+        // what there is; if it starves again the gate simply re-engages.
+        const bool giveUp = waited > 15000;
+        if (ready || blind || giveUp || leftInSegment < 0.25) {
+            resumeFromWait();
+            return;
+        }
+        return;   // stay held: nothing else may advance while the song is stopped
+    }
+
     // Advance on the audio clock: the song is the only authority on time.
     if (m_cutIdx + 1 < m_cuts.size() && m_pos >= m_cuts[m_cutIdx + 1]) {
         int next = m_cutIdx + 1;
@@ -324,25 +405,24 @@ void Show::tick() {
         } else {
             startSegment(next, m_pos);
         }
+        front = m_aIsFront ? m_a : m_b;
     } else {
         maybePreload();
     }
 
-    // Stall detection before drift correction: if the visible surface has not
-    // produced a frame for over a second while the song runs, it is waiting on
-    // the file. Correcting its clock then is actively harmful — every seek
-    // discards the reader's buffer and starts the fetch over, which is how a
-    // slow share ends up showing one static frame per seek forever.
-    MpvItem *front = m_aIsFront ? m_a : m_b;
+    // Stall detection before drift correction: if the visible surface stops
+    // producing frames while the song runs, it is waiting on the file. Hold the
+    // song there rather than letting it run ahead; correcting the clock of a
+    // starved demuxer throws its buffer away and restarts the fetch.
     if (front) {
         const double ft = front->frameTime();
         if (ft != m_lastFrameTs) {
             m_lastFrameTs = ft;
             m_sinceFrameAdvance.restart();
             m_seekStreak = 0;
-            setBuffering(false);
         } else if (m_sinceFrameAdvance.isValid() && m_sinceFrameAdvance.elapsed() > 1200) {
-            setBuffering(true);
+            beginWait();
+            return;
         }
     }
 
@@ -370,3 +450,4 @@ void Show::tick() {
         setPos(m_dur);
     }
 }
+

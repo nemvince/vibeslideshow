@@ -34,6 +34,9 @@ MpvItem::MpvItem(QQuickItem *parent) : QQuickFramebufferObject(parent) {
     }
     mpv_observe_property(m_mpv, 0, "time-pos", MPV_FORMAT_DOUBLE);
     mpv_observe_property(m_mpv, 0, "pause", MPV_FORMAT_FLAG);
+    // How much media is already buffered ahead. The show engine waits on this
+    // instead of guessing how long a slow drive needs.
+    mpv_observe_property(m_mpv, 0, "demuxer-cache-duration", MPV_FORMAT_DOUBLE);
     mpv_set_wakeup_callback(m_mpv, &MpvItem::wakeupCb, this);
 }
 
@@ -101,6 +104,9 @@ void MpvItem::pollEvents() {
         const QString name = QString::fromUtf8(p->name);
         if (p->format == MPV_FORMAT_DOUBLE && p->data && name == QLatin1String("time-pos")) {
             m_frameTime = *static_cast<double *>(p->data);
+        } else if (p->format == MPV_FORMAT_DOUBLE && p->data && name == QLatin1String("demuxer-cache-duration")) {
+            m_buffered = *static_cast<double *>(p->data);
+            m_haveBufferInfo = true;
         } else if (p->format == MPV_FORMAT_FLAG && p->data && name == QLatin1String("pause")) {
             m_paused = *static_cast<int *>(p->data) != 0;
         }
@@ -114,7 +120,7 @@ void MpvItem::loadAndSeek(const QString &path, double t) {
     // the picture stalls on the frame it already had.
     const bool remote = path.contains(QLatin1String("/gvfs/")) || path.startsWith(QLatin1String("//")) ||
                         path.startsWith(QLatin1String("/mnt/")) || path.startsWith(QLatin1String("/media/"));
-    mpv_set_property_string(m_mpv, "demuxer-readahead-secs", remote ? "2" : "20");
+    mpv_set_property_string(m_mpv, "demuxer-readahead-secs", remote ? "4" : "20");
     mpv_set_property_string(m_mpv, "demuxer-max-bytes", remote ? "48MiB" : "256MiB");
 
     m_pendingPath = path;
@@ -123,6 +129,9 @@ void MpvItem::loadAndSeek(const QString &path, double t) {
     // The surface should report the new time immediately: a drift correction
     // right after a cut must not compare against the previous clip's clock.
     m_frameTime = t;
+    // A new file starts with nothing buffered; the old value is meaningless.
+    m_buffered = -1;
+    m_haveBufferInfo = false;
     maybeLoad();
 }
 

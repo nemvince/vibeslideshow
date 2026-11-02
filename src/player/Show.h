@@ -88,6 +88,9 @@ private:
     void maybePreload();
     void revealCut(int next);
     void setBuffering(bool b);
+    // The picture cannot keep up: hold the song instead of running past it.
+    void beginWait();
+    void resumeFromWait();
     double expectedVideoTime(int idx, double songTime) const;
     QString pathFor(const TlSeg &s, double *dur) const;
     void setPos(double t);
@@ -133,4 +136,10 @@ private:
     QElapsedTimer m_sinceFrameAdvance;
     // Repeated corrections that did not stick: back off instead of hammering.
     int m_seekStreak = 0;
+    // Waiting for the file: the song is paused so the picture cannot fall further
+    // behind, and `m_resync` marks the single corrective seek issued before the
+    // resume so picture and music continue together.
+    bool m_waiting = false;
+    bool m_resync = false;
+    QElapsedTimer m_sinceWaitStart;
 };

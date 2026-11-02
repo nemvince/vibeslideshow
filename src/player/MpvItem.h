@@ -55,6 +55,10 @@ public:
     bool paused() const { return m_paused; }
     // Current frame time in seconds (mpv's own clock for this surface).
     double frameTime() const { return m_frameTime; }
+    // Seconds of media buffered ahead of the current position (mpv's demuxer
+    // cache). Negative when mpv has not reported yet.
+    double bufferedSecs() const { return m_buffered; }
+    bool hasBufferInfo() const { return m_haveBufferInfo; }
     // Ask Qt for one more frame on this surface. With ADVANCED_CONTROL mpv only
     // advances its decoder when render() runs, so the show engine pumps the
     // visible surface off the song clock instead of relying on wakeups alone.
@@ -81,6 +85,8 @@ private:
     double m_pendingSeek = -1;
 
     double m_frameTime = 0;
+    double m_buffered = -1;
+    bool m_haveBufferInfo = false;
     bool m_paused = true;
 };
 

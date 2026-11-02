@@ -72,6 +72,13 @@ qml/               Studio (window), LibraryRail, Stage, SidePanel + widgets
 The clock is an **audio-only third mpv instance**. A cut can never perturb the
 song timeline, because video surfaces never carry the soundtrack.
 
+The song is the clock, but it is not allowed to run ahead of the picture: when the
+visible clip stops producing frames, the song is paused at that position, a
+"Buffering…" badge appears, and playback resumes only once the surface has media
+buffered ahead (and has been re-synced with a single seek if it drifted). Seeking
+goes through the same gate, so sound and image always restart together — on a slow
+network share the show waits instead of drifting out of sync.
+
 Two video surfaces are kept. The incoming clip is loaded and paused on its first
 frame on the hidden surface once the previous crossfade is over, then revealed
 when the audio clock crosses the cut: a cut is a pre-decoded reveal, not a seek.
