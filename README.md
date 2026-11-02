@@ -85,7 +85,11 @@ the code looks next to the binary first (and honours `VIBESLIDESHOW_TOOLS_DIR`).
    thresholds and windows the presets tune stay out of the UI).
 6. The strip at the bottom is the edit. Select a segment to shorten, lengthen,
    chop, re-roll its in-point, swap its clip or delete it. Click a clip in the
-   rail to drop it in at the playhead.
+   rail to drop it in at the playhead. It has a zoom (**−** / **+** in the
+   toolbar, or Ctrl+wheel over the strip): at 1× the whole song fits the window,
+   and further in the strip scrolls — segments then get wide enough to show a
+   preview of the clip they hold, and its name once there is room. The playhead
+   is followed while the show plays; scrolling yourself leaves the view alone.
 
 While any pass runs, the top bar's message slot carries what it is doing and how
 far it has got (counts, ETA, percentage), with the progress line on the top bar's

@@ -10,9 +10,9 @@ Rectangle {
     property bool flat: false
     signal clicked()
 
-    implicitWidth: label.implicitWidth + (flat ? 12 : 22)
-    implicitHeight: flat ? 24 : 30
-    radius: 7
+    implicitWidth: label.implicitWidth + (flat ? 14 : 20)
+    implicitHeight: flat ? 22 : 26
+    radius: 6
     color: flat ? (mouse.containsMouse ? Theme.panelHi : "transparent")
          : accent ? (mouse.containsMouse ? "#ffbe5c" : Theme.accent)
                   : (mouse.containsMouse ? Theme.panelHi : Theme.panel)

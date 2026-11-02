@@ -10,9 +10,9 @@ Rectangle {
     property string tip: ""
     signal clicked()
 
-    width: 28
-    height: 26
-    radius: 6
+    width: 26
+    height: 24
+    radius: 5
     color: mouse.containsMouse && enabled ? Theme.panelHi : "transparent"
     opacity: enabled ? 1 : 0.35
 
@@ -20,7 +20,7 @@ Rectangle {
         anchors.centerIn: parent
         text: btn.glyph
         color: Theme.ink
-        font.pixelSize: 15
+        font.pixelSize: 14
     }
     MouseArea {
         id: mouse

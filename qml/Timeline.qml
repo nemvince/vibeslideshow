@@ -3,14 +3,25 @@ import QtQuick.Controls
 import Vibes 1.0
 
 // The edit, as a timeline: a time ruler, segments proportional to their length, a
-// playhead over them, and the whole surface is the seek control. This replaces
-// the separate scrubber and segment strip — one thing you look at and scrub.
+// playhead over them, and the whole surface is the seek control.
+//
+// Zoom stretches the song past the width of the window: at 1× the whole edit fits
+// exactly (the overview), and further in the strip scrolls, so segments get wide
+// enough to carry a preview of the clip they contain. The playhead is followed
+// while the show plays; nothing else moves the view under the user's hand.
 Item {
     id: tl
     implicitHeight: 108
     // Scrubbing and segment picking are off while the library is being rebuilt or
     // the song is still being read: the edit on screen is about to be replaced.
     enabled: studio.workspaceEnabled
+
+    // 1× = the whole song fits the window. Beyond that the strip scrolls.
+    property real zoom: 1.0
+    readonly property real maxZoom: 24.0
+    readonly property bool zoomed: zoom > 1.001
+    // How much of the song is on screen, in seconds: what the ruler ticks against.
+    readonly property real visibleSeconds: duration / Math.max(1, zoom)
 
     // Prefer the player's own duration, but never depend on it: while mpv is still
     // opening the file it reports 0, and every segment would be screen-wide.
@@ -25,9 +36,52 @@ Item {
     readonly property bool knownDuration: showCtl.duration > 0 || timeline.songDuration > 0
     readonly property int rulerHeight: 18
 
-    function seekTo(x) {
-        const frac = Math.max(0, Math.min(1, x / Math.max(1, width)))
-        studio.seek(frac * duration)
+    readonly property real contentWidth: Math.max(width, Math.round(width * zoom))
+    readonly property real maxScroll: Math.max(0, contentWidth - width)
+
+    function timeAt(x) { return Math.max(0, Math.min(1, x / Math.max(1, contentWidth))) * duration }
+    function xAt(t) { return duration > 0 ? (t / duration) * contentWidth : 0 }
+    function seekTo(x) { studio.seek(timeAt(x)) }
+
+    function setZoom(z) {
+        const next = Math.max(1, Math.min(maxZoom, z))
+        if (Math.abs(next - zoom) < 0.001) return
+        // Keep the moment in the middle of the view in the middle of the view.
+        const centre = timeAt(flick.contentX + width / 2)
+        zoom = next
+        flick.contentX = Math.max(0, Math.min(maxScroll, xAt(centre) - width / 2))
+    }
+    function zoomIn() { setZoom(zoom * 1.6) }
+    function zoomOut() { setZoom(zoom / 1.6) }
+
+    // Keep the playhead on screen while the show runs. Called off position changes,
+    // so it does nothing at 1× and costs one comparison otherwise.
+    function followPlayhead() {
+        if (!zoomed || width <= 0) return
+        const px = progressFrac * contentWidth
+        const left = flick.contentX + width * 0.12
+        const right = flick.contentX + width * 0.88
+        if (px < left || px > right)
+            flick.contentX = Math.max(0, Math.min(maxScroll, px - width / 2))
+    }
+
+    // ---- ruler ticks ------------------------------------------------------
+    // A "nice" interval that fits the visible span, so zooming in shows seconds
+    // and zooming out shows minutes instead of seven arbitrary fractions.
+    readonly property real tickStep: {
+        const raw = visibleSeconds / 6
+        const steps = [0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600]
+        for (let i = 0; i < steps.length; i++) if (steps[i] >= raw) return steps[i]
+        return 900
+    }
+    function tickTimes() {
+        if (!knownDuration) return []
+        const first = Math.ceil(timeAt(flick.contentX) / tickStep) * tickStep
+        const last = timeAt(flick.contentX + width)
+        const out = []
+        for (let t = first; t <= last + 1e-6 && out.length < 32; t += tickStep)
+            out.push(Math.round(t * 1000) / 1000)
+        return out
     }
 
     Rectangle {
@@ -37,142 +91,204 @@ Item {
         border.color: Theme.line
         clip: true
 
-        // ---- time ruler ----
-        Item {
-            id: ruler
-            anchors { left: parent.left; right: parent.right; top: parent.top }
-            height: tl.rulerHeight
+        Flickable {
+            id: flick
+            anchors.fill: parent
+            contentWidth: tl.contentWidth
+            contentHeight: height
+            // No drag-to-scroll: dragging on this surface scrubs, and it always has.
+            interactive: false
+            clip: true
+            boundsBehavior: Flickable.StopAtBounds
 
-            Repeater {
-                model: 7
-                delegate: Item {
-                    required property int index
-                    x: index / 6 * ruler.width
-                    width: 1
-                    height: ruler.height
-
-                    Rectangle { width: 1; height: 5; y: ruler.height - height; color: Theme.line }
-                    Text {
-                        visible: index > 0 && index < 6 && tl.knownDuration
-                        x: 4
-                        text: studio.formatTime(index / 6 * tl.duration)
-                        color: Theme.faint
-                        font.pixelSize: 9
-                        font.family: "monospace"
-                    }
+            // Only there when there is something to scroll.
+            ScrollBar.horizontal: ScrollBar {
+                policy: tl.zoomed ? ScrollBar.AsNeeded : ScrollBar.AlwaysOff
+                height: 4
+                background: Item {}
+                contentItem: Rectangle {
+                    implicitHeight: 3
+                    radius: 1.5
+                    color: Theme.faint
+                    opacity: parent.pressed ? 0.9 : 0.45
                 }
             }
 
-            Rectangle {
-                anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
-                height: 1
-                color: Theme.line
-            }
-        }
+            Item {
+                id: canvas
+                width: flick.contentWidth
+                height: flick.height
 
-        // ---- segments ----
-        Row {
-            id: track
-            anchors {
-                left: parent.left
-                right: parent.right
-                top: ruler.bottom
-                bottom: parent.bottom
-            }
-            anchors.leftMargin: 1
-            anchors.rightMargin: 1
-            anchors.bottomMargin: 1
-            spacing: 0
+                // ---- time ruler ----
+                Item {
+                    id: ruler
+                    anchors { left: parent.left; right: parent.right; top: parent.top }
+                    height: tl.rulerHeight
 
-            Repeater {
-                model: timeline
-                delegate: Item {
-                    id: cell
-                    required property int index
-                    required property var model
-                    height: track.height
-                    width: Math.max(1, Math.min(track.width, model.segLen / tl.duration * track.width))
-
-                    readonly property bool showThumb: width >= 32
-
-                    Rectangle {
-                        anchors.fill: parent
-                        color: cell.model.segSelected ? "#2c3138" : Theme.panelHi
-                        clip: true
-
-                        Image {
-                            anchors.fill: parent
-                            visible: cell.showThumb
-                            fillMode: Image.PreserveAspectCrop
-                            asynchronous: true
-                            cache: true
-                            source: cell.model.segThumb && cell.showThumb ? "file://" + cell.model.segThumb : ""
-                            opacity: 0.8
-                        }
-                        Rectangle {
-                            anchors.fill: parent
-                            color: cell.model.segColor
-                            opacity: cell.model.segThumb && cell.showThumb ? 0.15 : 0.5
-                        }
-                        // A hairline between cuts: a dense edit still reads as
-                        // separate shots instead of a smear.
-                        Rectangle {
-                            anchors { right: parent.right; top: parent.top; bottom: parent.bottom }
+                    Repeater {
+                        model: tl.tickTimes()
+                        delegate: Item {
+                            required property real modelData
+                            x: Math.round(tl.xAt(modelData))
                             width: 1
-                            color: Theme.bg
+                            height: ruler.height
+
+                            Rectangle { width: 1; height: 5; y: ruler.height - height; color: Theme.line }
+                            Text {
+                                x: 4
+                                text: studio.formatTime(modelData)
+                                color: Theme.faint
+                                font.pixelSize: 9
+                                font.family: "monospace"
+                            }
                         }
                     }
 
-                    // Selection: top and bottom rules, so a thin segment cannot
-                    // lose its highlight.
-                    Rectangle {
-                        anchors { left: parent.left; right: parent.right; top: parent.top }
-                        height: 2
-                        color: Theme.accent
-                        visible: cell.model.segSelected
-                    }
                     Rectangle {
                         anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
-                        height: 2
-                        color: Theme.accent
-                        visible: cell.model.segSelected
+                        height: 1
+                        color: Theme.line
                     }
                 }
-            }
-        }
 
-        // ---- playhead ----
-        Item {
-            x: Math.max(0, Math.min(tl.width - width, tl.progressFrac * tl.width - width / 2))
-            width: 11
-            height: parent.height
-            visible: timeline.count > 0
+                // ---- segments ----
+                Row {
+                    id: track
+                    anchors {
+                        left: parent.left
+                        right: parent.right
+                        top: ruler.bottom
+                        bottom: parent.bottom
+                    }
+                    anchors.leftMargin: 1
+                    anchors.rightMargin: 1
+                    anchors.bottomMargin: 1
+                    spacing: 0
 
-            Rectangle {
-                anchors.horizontalCenter: parent.horizontalCenter
-                width: 2
-                height: parent.height
-                color: Theme.accent
-            }
-            Rectangle {
-                anchors.horizontalCenter: parent.horizontalCenter
-                width: 9
-                height: 7
-                radius: 2
-                color: Theme.accent
-            }
-        }
+                    Repeater {
+                        model: timeline
+                        delegate: Item {
+                            id: cell
+                            required property int index
+                            required property var model
+                            height: track.height
+                            width: Math.max(1, Math.min(track.width, model.segLen / tl.duration * track.width))
 
-        // ---- scrubbing ----
-        MouseArea {
-            anchors.fill: parent
-            cursorShape: Qt.PointingHandCursor
-            onPressed: (m) => tl.seekTo(m.x)
-            onPositionChanged: (m) => { if (pressed) tl.seekTo(m.x) }
-            onReleased: (m) => {
-                const t = Math.max(0, Math.min(1, m.x / Math.max(1, tl.width))) * tl.duration
-                const idx = timeline.indexAt(t)
-                if (idx >= 0) timeline.selected = idx
+                            // A preview needs room to be a picture rather than a
+                            // smudge: the wider the segment, the more it can show.
+                            readonly property bool showThumb: width >= 28
+                            readonly property bool showName: width >= 120
+
+                            Rectangle {
+                                anchors.fill: parent
+                                color: cell.model.segSelected ? "#2c3138" : Theme.panelHi
+                                clip: true
+
+                                Image {
+                                    anchors.fill: parent
+                                    visible: cell.showThumb
+                                    fillMode: Image.PreserveAspectCrop
+                                    asynchronous: true
+                                    cache: true
+                                    source: cell.model.segThumb && cell.showThumb ? "file://" + cell.model.segThumb : ""
+                                    opacity: 0.8
+                                }
+                                Rectangle {
+                                    anchors.fill: parent
+                                    color: cell.model.segColor
+                                    opacity: cell.model.segThumb && cell.showThumb ? 0.15 : 0.5
+                                }
+                                // Name and length once there is room for them; with
+                                // no preview the label is the only identification.
+                                Text {
+                                    visible: cell.showName
+                                    anchors {
+                                        left: parent.left
+                                        right: parent.right
+                                        bottom: parent.bottom
+                                        leftMargin: 5
+                                        rightMargin: 5
+                                        bottomMargin: 3
+                                    }
+                                    text: cell.model.segName
+                                    color: Theme.ink
+                                    font.pixelSize: 9
+                                    elide: Text.ElideRight
+                                    style: Text.Outline
+                                    styleColor: "#99000000"
+                                }
+                                // A hairline between cuts: a dense edit still reads as
+                                // separate shots instead of a smear.
+                                Rectangle {
+                                    anchors { right: parent.right; top: parent.top; bottom: parent.bottom }
+                                    width: 1
+                                    color: Theme.bg
+                                }
+                            }
+
+                            // Selection: top and bottom rules, so a thin segment cannot
+                            // lose its highlight.
+                            Rectangle {
+                                anchors { left: parent.left; right: parent.right; top: parent.top }
+                                height: 2
+                                color: Theme.accent
+                                visible: cell.model.segSelected
+                            }
+                            Rectangle {
+                                anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
+                                height: 2
+                                color: Theme.accent
+                                visible: cell.model.segSelected
+                            }
+                        }
+                    }
+                }
+
+                // ---- playhead ----
+                Item {
+                    x: Math.max(0, Math.min(canvas.width - width, tl.progressFrac * canvas.width - width / 2))
+                    width: 11
+                    height: canvas.height
+                    visible: timeline.count > 0
+
+                    Rectangle {
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        width: 2
+                        height: parent.height
+                        color: Theme.accent
+                    }
+                    Rectangle {
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        width: 9
+                        height: 7
+                        radius: 2
+                        color: Theme.accent
+                    }
+                }
+
+                // ---- scrubbing ----
+                MouseArea {
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    onPressed: (m) => tl.seekTo(m.x)
+                    onPositionChanged: (m) => { if (pressed) tl.seekTo(m.x) }
+                    onReleased: (m) => {
+                        const idx = timeline.indexAt(tl.timeAt(m.x))
+                        if (idx >= 0) timeline.selected = idx
+                    }
+                }
+
+                // Wheel scrolls, ctrl+wheel zooms around the middle of the view.
+                WheelHandler {
+                    onWheel: (event) => {
+                        if (event.modifiers & Qt.ControlModifier) {
+                            tl.setZoom(tl.zoom * (event.angleDelta.y > 0 ? 1.2 : 1 / 1.2))
+                        } else if (tl.zoomed) {
+                            flick.contentX = Math.max(0, Math.min(tl.maxScroll, flick.contentX - event.angleDelta.y))
+                        }
+                        event.accepted = true
+                    }
+                }
             }
         }
 
@@ -193,5 +309,10 @@ Item {
             color: Theme.bg
             opacity: 0.55
         }
+    }
+
+    Connections {
+        target: showCtl
+        function onPositionChanged() { tl.followPlayhead() }
     }
 }

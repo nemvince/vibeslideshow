@@ -39,12 +39,12 @@ ApplicationWindow {
     Rectangle {
         id: topBar
         anchors { top: parent.top; left: parent.left; right: parent.right }
-        height: 62
+        height: 52
         color: Theme.panel
 
         RowLayout {
             anchors { fill: parent; leftMargin: Theme.pad; rightMargin: Theme.pad }
-            spacing: 16
+            spacing: 12
 
             Row {
                 spacing: 9
@@ -178,8 +178,8 @@ ApplicationWindow {
         Rectangle { anchors.top: parent.top; width: parent.width; height: 1; color: Theme.line }
 
         ColumnLayout {
-            anchors { fill: parent; margins: Theme.gap }
-            spacing: 8
+            anchors { fill: parent; margins: 10 }
+            spacing: 6
 
             // One control row: transport, edit actions, volume, Generate. Seeking
             // happens on the timeline itself.
@@ -189,7 +189,7 @@ ApplicationWindow {
 
                 Rectangle {
                     id: playBtn
-                    implicitWidth: 36; implicitHeight: 36; radius: 18
+                    implicitWidth: 30; implicitHeight: 30; radius: 15
                     // Locked while the library or the song is being (re)built:
                     // there is no valid edit to start or stop in that window, and
                     // nothing to play before a song has been read.
@@ -201,7 +201,7 @@ ApplicationWindow {
                         anchors.centerIn: parent
                         text: showCtl.playing ? "\u275A\u275A" : "\u25B6"
                         color: Theme.ink
-                        font.pixelSize: 13
+                        font.pixelSize: 11
                     }
                     MouseArea {
                         anchors.fill: parent
@@ -246,6 +246,33 @@ ApplicationWindow {
                 }
 
                 Rectangle { Layout.preferredWidth: 1; implicitHeight: 18; color: Theme.line; Layout.leftMargin: 2; Layout.rightMargin: 2 }
+
+                Rectangle { Layout.preferredWidth: 1; implicitHeight: 16; color: Theme.line; Layout.leftMargin: 2; Layout.rightMargin: 2 }
+
+                // Zoom: 1× fits the whole song, further in the strip scrolls and the
+                // segments get wide enough to show their previews.
+                IconButton {
+                    glyph: "\u2212"
+                    tip: "Zoom the timeline out"
+                    enabled: tl.zoom > 1.001
+                    onClicked: tl.zoomOut()
+                }
+                Text {
+                    Layout.preferredWidth: 30
+                    horizontalAlignment: Text.AlignHCenter
+                    text: tl.zoom.toFixed(1) + "\u00D7"
+                    color: tl.zoomed ? Theme.ink : Theme.faint
+                    font.pixelSize: 10
+                    font.family: "monospace"
+                }
+                IconButton {
+                    glyph: "+"
+                    tip: "Zoom the timeline in"
+                    enabled: tl.zoom < tl.maxZoom
+                    onClicked: tl.zoomIn()
+                }
+
+                Rectangle { Layout.preferredWidth: 1; implicitHeight: 16; color: Theme.line; Layout.leftMargin: 2; Layout.rightMargin: 2 }
 
                 Text {
                     text: "vol"

@@ -7,7 +7,7 @@ import Vibes 1.0
 Slider {
     id: s
     property color fillColor: Theme.accent
-    implicitHeight: 20
+    implicitHeight: 18
 
     background: Rectangle {
         x: s.leftPadding
