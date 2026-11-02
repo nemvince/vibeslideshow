@@ -36,6 +36,9 @@ class Studio : public QObject {
     Q_PROPERTY(QVariantList presets READ presets NOTIFY presetsChanged)
     Q_PROPERTY(QVariantList advanced READ advanced NOTIFY advancedChanged)
     Q_PROPERTY(QVariantList profiles READ profiles NOTIFY profilesChanged)
+    // Every look the picker offers: built-in presets first, then saved ones, each
+    // marked if it is the active look.
+    Q_PROPERTY(QVariantList looks READ looks NOTIFY looksChanged)
     Q_PROPERTY(QString activePreset READ activePreset NOTIFY activePresetChanged)
     Q_PROPERTY(QVariantMap params READ params NOTIFY paramsChanged)
     Q_PROPERTY(QStringList days READ days NOTIFY filtersChanged)
@@ -66,6 +69,7 @@ public:
     QVariantList presets() const;
     QVariantList advanced() const;
     QVariantList profiles() const;
+    QVariantList looks() const;
     QString activePreset() const { return m_activePreset; }
     QVariantMap params() const { return m_params.toMap(); }
     QStringList days() const;
@@ -117,6 +121,7 @@ signals:
     void presetsChanged();
     void advancedChanged();
     void profilesChanged();
+    void looksChanged();
     void activePresetChanged();
     void paramsChanged();
     void filtersChanged();
@@ -154,6 +159,8 @@ private:
     Analysis m_analysis;
     Filters m_filters;
     QString m_activePreset;
+    // Name of a saved look when one is in use; empty while a preset is active.
+    QString m_activeProfile;
     QString m_status;
     bool m_songBusy = false;
     bool m_pendingRegenerate = false;

@@ -17,5 +17,6 @@
         <file>qml/ProgressLine.qml</file>
         <file>qml/IconButton.qml</file>
         <file>qml/Timeline.qml</file>
+        <file>qml/ToggleSwitch.qml</file>
     </qresource>
 </RCC>

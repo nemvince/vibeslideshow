@@ -71,7 +71,8 @@ the code looks next to the binary first (and honours `VIBESLIDESHOW_TOOLS_DIR`).
 3. The rail on the left shows every clip with a score; clips the filters exclude
    stay visible but dimmed.
 4. The panel on the right is the settings panel, in collapsible sections: **Look**
-   (one dropdown of presets plus saved looks), **Footage** (the filters — best
+   (the one preset manager: built-in looks, saved looks with a delete button, and
+   saving under a name), **Footage** (the filters — best
    clips only, keep the frame moving, skip dark clips, one day, daytime hours),
    **Saved looks** and **Advanced** (a dozen controls that mean something;
    thresholds and windows the presets tune stay out of the UI).

@@ -26,6 +26,7 @@ namespace {
 QVariantMap filtersToMap(const Filters &f) {
     QVariantMap m;
     m["junk"] = f.junk;
+    m["skipWindowsOn"] = f.skipWindowsOn;
     m["skipWindows"] = f.skipWindows;
     m["dayOn"] = f.dayOn;
     m["day"] = f.day;
@@ -112,6 +113,7 @@ Filters filtersFromMap(const QVariantMap &m) {
     Filters f;
     if (m.isEmpty()) return f;
     f.junk = m.value("junk", true).toBool();
+    f.skipWindowsOn = m.value("skipWindowsOn", !f.skipWindows.isEmpty()).toBool();
     f.skipWindows = m.value("skipWindows", f.skipWindows).toString();
     f.dayOn = m.value("dayOn", false).toBool();
     f.day = m.value("day").toString();
@@ -262,6 +264,7 @@ void Studio::refreshProfiles() {
     QFile f(configDir() + QStringLiteral("/profiles.json"));
     if (f.open(QIODevice::ReadOnly)) m_profiles = QJsonDocument::fromJson(f.readAll()).object().toVariantMap();
     emit profilesChanged();
+    emit looksChanged();
 }
 
 void Studio::writeProfiles() {
@@ -269,6 +272,29 @@ void Studio::writeProfiles() {
     QFile f(configDir() + QStringLiteral("/profiles.json"));
     if (f.open(QIODevice::WriteOnly | QIODevice::Truncate))
         f.write(QJsonDocument(QJsonObject::fromVariantMap(m_profiles)).toJson(QJsonDocument::Indented));
+}
+
+QVariantList Studio::looks() const {
+    QVariantList out;
+    for (const Preset &p : builtinPresets()) {
+        QVariantMap row;
+        row["name"] = p.name;
+        row["blurb"] = p.blurb;
+        row["saved"] = false;
+        row["active"] = m_activeProfile.isEmpty() && p.name == m_activePreset;
+        out.append(row);
+    }
+    QStringList names = m_profiles.keys();
+    std::sort(names.begin(), names.end());
+    for (const QString &n : names) {
+        QVariantMap row;
+        row["name"] = n;
+        row["blurb"] = QStringLiteral("Saved look");
+        row["saved"] = true;
+        row["active"] = n == m_activeProfile;
+        out.append(row);
+    }
+    return out;
 }
 
 QVariantList Studio::profiles() const {
@@ -289,6 +315,7 @@ void Studio::saveProfile(const QString &name) {
     writeProfiles();
     setStatus(QStringLiteral("Saved look “%1”").arg(name.trimmed()));
     refreshProfiles();
+    emit looksChanged();
 }
 
 void Studio::loadProfile(const QString &name) {
@@ -296,6 +323,7 @@ void Studio::loadProfile(const QString &name) {
     const QVariantMap entry = m_profiles.value(name).toMap();
     m_params.applyMap(entry.value("params").toMap());
     m_activePreset = entry.value("preset").toString();
+    m_activeProfile = name;
     if (!entry.value("filters").toMap().isEmpty()) applyFilters(entry.value("filters").toMap());
     syncScheduler();
     m_clips->setFilters(m_filters);
@@ -311,6 +339,7 @@ void Studio::deleteProfile(const QString &name) {
     if (!m_profiles.remove(name)) return;
     writeProfiles();
     refreshProfiles();
+    emit looksChanged();
 }
 
 // ---- library -------------------------------------------------------------
@@ -632,6 +661,7 @@ void Studio::applyPreset(const QString &name) {
         base.applyMap(p.overrides);
         m_params = base;
         m_activePreset = name;
+        m_activeProfile.clear();
         syncScheduler();
         emit activePresetChanged();
         emit paramsChanged();
@@ -649,10 +679,12 @@ void Studio::setParam(const QString &key, const QVariant &value) {
     QVariantMap m = m_params.toMap();
     m[key] = value;
     m_params.applyMap(m);
-    // Any hand edit detaches from the named preset.
-    if (!m_activePreset.isEmpty()) {
+    // Any hand edit detaches from the named look.
+    if (!m_activePreset.isEmpty() || !m_activeProfile.isEmpty()) {
         m_activePreset.clear();
+        m_activeProfile.clear();
         emit activePresetChanged();
+        emit looksChanged();
     }
     syncScheduler();
     emit paramsChanged();
@@ -663,6 +695,7 @@ void Studio::setParam(const QString &key, const QVariant &value) {
 void Studio::restoreDefaults() {
     m_params = Params();
     m_activePreset = QStringLiteral("Anything");
+    m_activeProfile.clear();
     syncScheduler();
     emit activePresetChanged();
     emit paramsChanged();
@@ -686,6 +719,7 @@ void Studio::applyFilters(const QVariantMap &m) {
 void Studio::setFilter(const QString &key, const QVariant &value) {
     const double d = value.toDouble();
     if (key == QLatin1String("junk")) m_filters.junk = value.toBool();
+    else if (key == QLatin1String("skipWindowsOn")) m_filters.skipWindowsOn = value.toBool();
     else if (key == QLatin1String("skipWindows")) m_filters.skipWindows = value.toString();
     else if (key == QLatin1String("dayOn")) {
         m_filters.dayOn = value.toBool();

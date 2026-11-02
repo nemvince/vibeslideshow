@@ -106,8 +106,9 @@ Rectangle {
                     font.pixelSize: 11
                     lineHeight: 1.25
                     text: {
-                        const i = studio.presets.findIndex(function (p) { return p.active })
-                        return i >= 0 ? studio.presets[i].blurb : "A hand-tuned look."
+                        for (let i = 0; i < studio.looks.length; i++)
+                            if (studio.looks[i].active) return studio.looks[i].blurb
+                        return "A hand-tuned look."
                     }
                 }
 
@@ -128,9 +129,35 @@ Rectangle {
                         onClicked: studio.restoreDefaults()
                     }
                 }
+
+                // Saving lives with the looks it saves — one manager, not a
+                // separate section that only knows half the story.
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 6
+                    TextField {
+                        id: nameField
+                        Layout.fillWidth: true
+                        implicitHeight: 28
+                        placeholderText: "Name this look"
+                        font.pixelSize: 11
+                        color: Theme.ink
+                        background: Rectangle {
+                            color: Theme.bg
+                            radius: 6
+                            border.color: nameField.activeFocus ? Theme.accent : Theme.line
+                        }
+                        onAccepted: { studio.saveProfile(text); text = ""; }
+                    }
+                    SmallButton {
+                        text: "Save look"
+                        enabled: nameField.text.length > 0
+                        onClicked: { studio.saveProfile(nameField.text); nameField.text = ""; }
+                    }
+                }
             }
 
-            Rectangle { Layout.fillWidth: true; height: 1; color: Theme.line; Layout.topMargin: 8; Layout.bottomMargin: 4 }
+            Rectangle { Layout.fillWidth: true; implicitHeight: 1; color: Theme.line; Layout.topMargin: 8; Layout.bottomMargin: 4 }
 
             // ---- footage ------------------------------------------------
             PanelSection {
@@ -169,6 +196,28 @@ Rectangle {
                     label: "Only daytime"
                     checked: studio.filters.todOn === true
                     onToggled: studio.setFilter("todOn", checked)
+                }
+                FilterRow {
+                    Layout.fillWidth: true
+                    label: "Skip some dates"
+                    checked: studio.filters.skipWindowsOn === true
+                    onToggled: studio.setFilter("skipWindowsOn", checked)
+                }
+                TextField {
+                    id: skipField
+                    visible: studio.filters.skipWindowsOn === true
+                    Layout.fillWidth: true
+                    implicitHeight: 28
+                    font.pixelSize: 11
+                    placeholderText: "2026-08-14±1, 2026-09-01"
+                    text: studio.filters.skipWindows
+                    color: Theme.ink
+                    background: Rectangle {
+                        color: Theme.bg
+                        radius: 6
+                        border.color: skipField.activeFocus ? Theme.accent : Theme.line
+                    }
+                    onEditingFinished: studio.setFilter("skipWindows", text)
                 }
                 RowLayout {
                     visible: studio.filters.todOn === true
@@ -215,70 +264,7 @@ Rectangle {
                 }
             }
 
-            Rectangle { Layout.fillWidth: true; height: 1; color: Theme.line; Layout.topMargin: 8; Layout.bottomMargin: 4 }
-
-            // ---- saved looks --------------------------------------------
-            PanelSection {
-                title: "Saved looks"
-                expanded: false
-
-                Flow {
-                    Layout.fillWidth: true
-                    visible: studio.profiles.length > 0
-                    spacing: 6
-                    Repeater {
-                        model: studio.profiles
-                        delegate: Rectangle {
-                            id: chip
-                            required property string modelData
-                            width: chipLabel.implicitWidth + 18
-                            height: 26
-                            radius: 6
-                            color: chipHover.hovered ? Theme.panelHi : "transparent"
-                            border.color: Theme.line
-                            Text {
-                                id: chipLabel
-                                anchors.centerIn: parent
-                                text: chip.modelData
-                                color: Theme.ink
-                                font.pixelSize: 11
-                            }
-                            HoverHandler { id: chipHover }
-                            MouseArea {
-                                anchors.fill: parent
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: studio.loadProfile(chip.modelData)
-                            }
-                        }
-                    }
-                }
-
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: 6
-                    TextField {
-                        id: nameField
-                        Layout.fillWidth: true
-                        implicitHeight: 30
-                        placeholderText: "Name this look"
-                        font.pixelSize: 12
-                        color: Theme.ink
-                        background: Rectangle {
-                            color: Theme.bg
-                            radius: 6
-                            border.color: nameField.activeFocus ? Theme.accent : Theme.line
-                        }
-                        onAccepted: { studio.saveProfile(text); text = ""; }
-                    }
-                    SmallButton {
-                        text: "Save"
-                        enabled: nameField.text.length > 0
-                        onClicked: { studio.saveProfile(nameField.text); nameField.text = ""; }
-                    }
-                }
-            }
-
-            Rectangle { Layout.fillWidth: true; height: 1; color: Theme.line; Layout.topMargin: 8; Layout.bottomMargin: 4 }
+            Rectangle { Layout.fillWidth: true; implicitHeight: 1; color: Theme.line; Layout.topMargin: 8; Layout.bottomMargin: 4 }
 
             // ---- advanced ------------------------------------------------
             PanelSection {
@@ -294,8 +280,11 @@ Rectangle {
                         Layout.fillWidth: true
                         spacing: 2
 
+                        // switch row
                         RowLayout {
+                            visible: advRow.model.kind === "check"
                             Layout.fillWidth: true
+                            spacing: 8
                             Text {
                                 Layout.fillWidth: true
                                 text: advRow.model.label
@@ -303,39 +292,55 @@ Rectangle {
                                 font.pixelSize: 11
                                 elide: Text.ElideRight
                             }
-                            Text {
-                                visible: advRow.model.kind === "number"
-                                text: {
+                            ToggleSwitch {
+                                Layout.alignment: Qt.AlignVCenter
+                                checked: studio.params[advRow.model.key] === true
+                                onToggled: studio.setParam(advRow.model.key, checked)
+                            }
+                        }
+
+                        // number row: label, live value, slider
+                        Text {
+                            visible: advRow.model.kind === "number"
+                            Layout.fillWidth: true
+                            text: advRow.model.label
+                            color: Theme.dim
+                            font.pixelSize: 11
+                            elide: Text.ElideRight
+                        }
+                        RowLayout {
+                            visible: advRow.model.kind === "number"
+                            Layout.fillWidth: true
+                            spacing: 6
+                            DarkSlider {
+                                Layout.fillWidth: true
+                                implicitHeight: 22
+                                from: advRow.model.min
+                                to: advRow.model.max
+                                stepSize: advRow.model.step
+                                fillColor: Theme.dim
+                                // Follows the parameter until grabbed; a single edit
+                                // does not rebuild this list, so drags survive.
+                                value: {
                                     const v = studio.params[advRow.model.key]
                                     return v === undefined ? advRow.model.value : v
+                                }
+                                onMoved: studio.setParam(advRow.model.key, value)
+                            }
+                            Text {
+                                Layout.preferredWidth: 44
+                                horizontalAlignment: Text.AlignRight
+                                text: {
+                                    const v = studio.params[advRow.model.key]
+                                    return v === undefined ? "" : String(v)
                                 }
                                 color: Theme.faint
                                 font.pixelSize: 10
                                 font.family: "monospace"
                             }
                         }
-                        DarkSlider {
-                            visible: advRow.model.kind === "number"
-                            Layout.fillWidth: true
-                            implicitHeight: 22
-                            from: advRow.model.min
-                            to: advRow.model.max
-                            stepSize: advRow.model.step
-                            fillColor: Theme.dim
-                            // Follows the parameter until the user grabs it; a drag
-                            // is never interrupted because a single edit does not
-                            // rebuild this list.
-                            value: {
-                                const v = studio.params[advRow.model.key]
-                                return v === undefined ? advRow.model.value : v
-                            }
-                            onMoved: studio.setParam(advRow.model.key, value)
-                        }
-                        Switch {
-                            visible: advRow.model.kind === "check"
-                            checked: studio.params[advRow.model.key] === true
-                            onToggled: studio.setParam(advRow.model.key, checked)
-                        }
+
+                        // text row
                         TextField {
                             visible: advRow.model.kind === "text"
                             Layout.fillWidth: true

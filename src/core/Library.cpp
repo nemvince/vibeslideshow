@@ -632,7 +632,7 @@ void Library::applyScores(quint64 gen, const QList<Score> &scores) {
 }
 
 QList<Clip> Library::poolFor(const Filters &f) const {
-    const QList<SkipWindow> wins = parseWindows(f.skipWindows);
+    const QList<SkipWindow> wins = f.skipWindowsOn ? parseWindows(f.skipWindows) : QList<SkipWindow>();
     const bool anyExclusion = f.junk || (f.dayOn && !f.day.isEmpty()) || f.scoreOn || f.mvOn || f.arOn ||
                               (f.todOn && !f.tod.isEmpty()) || !wins.isEmpty();
     // Fast path: nothing enabled at all.

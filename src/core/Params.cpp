@@ -30,7 +30,6 @@ QVariantMap Params::toMap() const {
     m["insMax"] = insMax;
     m["gridSec"] = gridSec;
     m["seed"] = seed;
-    m["skipWindows"] = skipWindows;
     return m;
 }
 
@@ -69,8 +68,6 @@ void Params::applyMap(const QVariantMap &m) {
     num("gridSec", gridSec);
     num("minShotSec", minShotSec);
     num("seed", seed);
-    auto it = m.constFind("skipWindows");
-    if (it != m.constEnd()) skipWindows = it->toString();
 }
 
 const QList<ParamField> &paramSchema() {
@@ -91,7 +88,6 @@ const QList<ParamField> &paramSchema() {
         {"useLrf", QStringLiteral("Play low-res proxies"), QStringLiteral("DJI cameras write a light .LRF twin next to each clip; it cuts faster."), ParamField::Check},
         {"seed", QStringLiteral("Edit seed"), QStringLiteral("0 reshuffles every run; any other number reproduces the exact same edit."), ParamField::Number, 0, 99999, 1},
         {"gridSec", QStringLiteral("Fallback cut interval"), QStringLiteral("Used when a song has no detectable beat."), ParamField::Number, 0.2, 2, 0.1, QStringLiteral("s")},
-        {"skipWindows", QStringLiteral("Skip date windows"), QStringLiteral("Comma separated, e.g. 2026-08-14±1, 2026-09-01."), ParamField::Text},
     };
     return s;
 }

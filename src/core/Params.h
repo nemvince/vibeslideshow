@@ -35,7 +35,6 @@ struct Params {
     // energy curve says "cut on every beat"; loud sections scale it down.
     double minShotSec = 1.2;
     int seed = 0;
-    QString skipWindows = QStringLiteral("2026-08-14±1");
 
     QVariantMap toMap() const;
     void applyMap(const QVariantMap &m);
@@ -78,6 +77,7 @@ TodRange todRange(double a, double b);
 // Everything the pool filter needs besides the clip list itself.
 struct Filters {
     bool junk = true;             // skip mostly-dark clips
+    bool skipWindowsOn = false;   // apply the date windows below
     QString skipWindows;          // date windows
     bool dayOn = false;
     QString day;
