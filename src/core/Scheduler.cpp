@@ -67,7 +67,7 @@ QList<double> Scheduler::fallbackGrid(double songDuration) const {
 
 Cuts Scheduler::buildCuts(double songDuration) const {
     const auto &bts = m_a.beats;
-    const auto &en = m_a.energy;
+    const auto &en = m_a.beatEnergy;
     const auto &secs = m_a.sections;
 
     QList<double> cuts, ce;
@@ -132,6 +132,15 @@ Cuts Scheduler::buildCuts(double songDuration) const {
                     hold = std::max(hold, std::min(m_p.holdMax * 2, jsRound((endH - bts[i]) / std::max(0.05, nxt))));
                 }
             }
+        }
+
+        // A track with a clear pulse wants its cuts on the grid; a loose, rubato
+        // one can breathe. This is the one place the danceability feature reaches
+        // the cut pattern, and it is deliberately mild: presets still sound like
+        // themselves. The section floor below still has the final say.
+        {
+            const double dance = m_a.danceability > 0 ? m_a.danceability : 0.5;
+            hold = std::max(1, jsRound(hold * (1.15 - 0.30 * dance)));
         }
 
         // Section floor in seconds. The energy curve alone asks for a cut on every
@@ -390,6 +399,25 @@ QList<TlSeg> Scheduler::materialize(double songDuration, const QList<Clip> &base
         const double end = (i + 1 < cc.times.size()) ? cc.times[i + 1] : songDuration;
         segs.append({-1, 0, std::max(TL_MIN, end - cc.times[i])});
     }
+    // How much movement a shot should have at a given moment. The music already
+    // tells us: loud runs and drops want the camera moving, chill passages want
+    // stillness. Taken from the same section table the holds are built from.
+    auto wantedMotion = [this](double t) {
+        const int si = secIdxAt(t);
+        if (si < 0) return 0.5;
+        const QString kind = m_a.sections[si].kind;
+        if (kind == QLatin1String("loud") || kind == QLatin1String("drop")) return 0.85;
+        if (kind == QLatin1String("build")) return 0.7;
+        if (kind == QLatin1String("chill")) return 0.2;
+        return 0.5;
+    };
+
+    // The walk stays chronological, but not blindly so: for each segment we look a
+    // few clips ahead and take the one whose movement matches the section, then
+    // keep walking from there. The chosen clip is swapped to the front of the
+    // window, so nothing is skipped and the order stays reproducible.
+    constexpr int LOOKAHEAD = 4;
+    QStringList used;
     int pos = 0;
     for (int i = 0; i < segs.size(); i++) {
         // A pick means the cut itself names the clip: drop openers land on the
@@ -404,14 +432,33 @@ QList<TlSeg> Scheduler::materialize(double songDuration, const QList<Clip> &base
             }
             if (segs[i].id >= 0) continue;
         }
-        const Clip &c = base[pos % base.size()];
-        // Near-black clips score ~0: roll on deterministically. A clip that has
-        // not been scored yet is not "bad" — the edit is generated as soon as the
-        // scan finishes so the user has something to look at while scoring runs.
-        if (c.scored && c.score < 8 && pos <= base.size() * 2) { pos++; i--; continue; }
+
+        // Candidates: the next few clips, minus the near-black ones. A clip that
+        // has not been scored yet is not "bad" — the edit is generated as soon as
+        // the scan finishes so there is something to look at while scoring runs.
+        int chosen = -1;
+        double bestCost = std::numeric_limits<double>::max();
+        const double want = wantedMotion(cc.times.value(i, 0));
+        for (int k = 0; k < LOOKAHEAD && pos + k < base.size(); k++) {
+            const Clip &cand = base[pos + k];
+            if (cand.scored && cand.score < 8) continue;
+            // Movement first, then how recently this clip was used: a short pool
+            // must repeat clips before it repeats them back to back.
+            const double cost = std::fabs(cand.mv / 100.0 - want) * 2.0
+                                + (used.lastIndexOf(QString::number(cand.id)) >= 0 ? 0.6 : 0.0);
+            if (cost < bestCost) {
+                bestCost = cost;
+                chosen = pos + k;
+            }
+        }
+        if (chosen < 0) chosen = pos % base.size();   // everything looked bad: take the next one
+        std::swap(base[pos], base[chosen]);
+        const Clip &c = base[pos];
         segs[i].id = c.id;
         segs[i].s = dur2seek(c, segs[i].len, rnd());
+        if (used.size() < base.size()) used.append(QString::number(c.id));
         pos++;
+        if (pos >= base.size()) { pos = 0; used.clear(); }
     }
     return segs;
 }

@@ -44,6 +44,22 @@ Rectangle {
         const mm = Math.round((h - Math.floor(h)) * 60)
         return (hh < 10 ? "0" : "") + hh + ":" + (mm < 10 ? "0" : "") + mm
     }
+    function energyWord(v) {
+        if (v < 0.25) return "still"
+        if (v < 0.5) return "unhurried"
+        if (v < 0.75) return "moving"
+        return "full-on"
+    }
+    function danceWord(v) {
+        if (v < 0.25) return "loose"
+        if (v < 0.55) return "steady"
+        return "on the grid"
+    }
+    function moodWord(v) {
+        if (v < 0.35) return "dark"
+        if (v < 0.65) return "warm"
+        return "bright"
+    }
     function shapeValue() {
         if (studio.filters.arOn !== true) return "any"
         const ar = studio.filters.ar
@@ -129,6 +145,62 @@ Rectangle {
             id: tools
             width: parent.width - 10
             spacing: 8
+
+            // ---- track --------------------------------------------------
+            // What the analysis heard. These are measurements of the audio, and
+            // the edit follows them: movement follows energy, holds follow
+            // danceability, and the section map decides where shots breathe.
+            ToolCard {
+                title: "Track"
+                hint: "Measured from the song itself — this is what the cut follows."
+
+                Text {
+                    Layout.fillWidth: true
+                    text: studio.songAnalysed
+                          ? Math.round(studio.bpm) + " bpm" + (studio.trackKey.length ? " · " + studio.trackKey : "")
+                          : "No song yet"
+                    color: Theme.ink
+                    font.pixelSize: 15
+                    font.weight: Font.DemiBold
+                }
+
+                MeterRow {
+                    visible: studio.songAnalysed
+                    label: "Energy"
+                    value: studio.energy
+                    word: panel.energyWord(studio.energy)
+                }
+                MeterRow {
+                    visible: studio.songAnalysed
+                    label: "Danceability"
+                    value: studio.danceability
+                    word: panel.danceWord(studio.danceability)
+                    fill: Theme.good
+                }
+                MeterRow {
+                    visible: studio.songAnalysed
+                    label: "Mood"
+                    value: studio.valence
+                    word: panel.moodWord(studio.valence)
+                    fill: Theme.accent
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    visible: studio.songAnalysed
+                    Text {
+                        Layout.fillWidth: true
+                        text: "Level " + studio.loudnessDb.toFixed(1) + " dBFS"
+                        color: Theme.faint
+                        font.pixelSize: 10
+                    }
+                    Text {
+                        text: studio.formatTime(timeline.songDuration)
+                        color: Theme.faint
+                        font.pixelSize: 10
+                    }
+                }
+            }
 
             // ---- look ---------------------------------------------------
             ToolCard {

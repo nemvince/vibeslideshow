@@ -82,6 +82,7 @@ the code looks next to the binary first (and honours `VIBESLIDESHOW_TOOLS_DIR`).
 
    | Tool | What it decides |
    |---|---|
+   | **Track** | what the analysis heard: tempo, key, energy, danceability, mood, level |
    | **Look** | the preset to start from, and saving the current settings as one |
    | **Pace** | how often it cuts, the shortest shot, the longest hold, and whether it follows the song's sections |
    | **Cuts & transitions** | how shots join, and the stutter burst at the drop |
@@ -93,6 +94,15 @@ the code looks next to the binary first (and honours `VIBESLIDESHOW_TOOLS_DIR`).
    is "quick dissolve · 120 ms", and the footage tool says how many of the
    library's clips survive the filters. The panel scrolls, and collapses to its
    title when you want the stage wider.
+
+   The **Track** card is the analysis talking: tempo, key and mode (Krumhansl
+   profile correlation over the chroma of the decoded audio), energy (loudness ×
+   onset density × brightness), danceability (how strongly the onset envelope
+   repeats at the beat period, and how regular the spacing is), mood (major/minor
+   weighted by how bright the mix is) and level in dBFS. Nothing is looked up —
+   all of it is measured from the file. The cut uses it: shots with movement land
+   where the music moves and still ones where it breathes, and a track with a
+   clear pulse is cut tighter than a loose one.
 6. The strip at the bottom is the edit. Select a segment to shorten, lengthen,
    chop, re-roll its in-point, swap its clip or delete it. Click a clip in the
    rail to drop it in at the playhead. It has a zoom (**−** / **+** in the
@@ -129,7 +139,8 @@ workspace is locked.
 
 ```
 src/
-  core/Analyzer    ffmpeg decode + beat/energy/section analysis
+  core/Analyzer    ffmpeg decode, beats, sections, and track features
+                   (key/mode, energy, danceability, brightness, loudness)
   core/Scheduler   buildCuts() + materialise() + seeded RNG
   core/Params      the generation parameters, presets, filter + skip-window config
   core/Library     scan, ffprobe, LRF pairing, scoring, cache

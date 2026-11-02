@@ -27,6 +27,13 @@ class Studio : public QObject {
     Q_PROPERTY(QString songSummary READ songSummary NOTIFY analysisChanged)
     // Beats per minute, so beat-based settings can be shown as seconds.
     Q_PROPERTY(double bpm READ bpm NOTIFY analysisChanged)
+    // The track as features: what the song is like, measured from its audio.
+    Q_PROPERTY(double energy READ energy NOTIFY analysisChanged)
+    Q_PROPERTY(double danceability READ danceability NOTIFY analysisChanged)
+    Q_PROPERTY(double valence READ valence NOTIFY analysisChanged)
+    Q_PROPERTY(double brightness READ brightness NOTIFY analysisChanged)
+    Q_PROPERTY(double loudnessDb READ loudnessDb NOTIFY analysisChanged)
+    Q_PROPERTY(QString trackKey READ trackKey NOTIFY analysisChanged)
     Q_PROPERTY(bool busy READ busy NOTIFY busyChanged)
     Q_PROPERTY(QString status READ status NOTIFY statusChanged)
     Q_PROPERTY(int scoreDone READ scoreDone NOTIFY progressChanged)
@@ -64,6 +71,12 @@ public:
     bool songAnalysed() const { return m_analysis.valid(); }
     QString songSummary() const;
     double bpm() const { return m_analysis.valid() ? m_analysis.bpm : 0.0; }
+    double energy() const { return m_analysis.valid() ? m_analysis.energy : 0.0; }
+    double danceability() const { return m_analysis.valid() ? m_analysis.danceability : 0.0; }
+    double valence() const { return m_analysis.valid() ? m_analysis.valence : 0.0; }
+    double brightness() const { return m_analysis.valid() ? m_analysis.brightness : 0.0; }
+    double loudnessDb() const { return m_analysis.valid() ? m_analysis.loudnessDb : -60.0; }
+    QString trackKey() const { return m_analysis.valid() ? m_analysis.keyName : QString(); }
     // Derived: the library is scanning/scoring, or a song is being analysed.
     // One flag shared by both is what used to hide the scan progress behind a
     // finished analysis.

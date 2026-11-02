@@ -20,6 +20,7 @@
         <file>qml/SwitchRow.qml</file>
         <file>qml/SliderRow.qml</file>
         <file>qml/ToolCard.qml</file>
+        <file>qml/MeterRow.qml</file>
         <file>qml/FirstRun.qml</file>
     </qresource>
 </RCC>

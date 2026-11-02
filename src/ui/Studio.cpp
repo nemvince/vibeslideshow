@@ -571,7 +571,9 @@ QString Studio::songSummary() const {
     int drops = 0;
     for (const auto &s : m_analysis.sections)
         if (s.kind == QLatin1String("drop")) drops++;
-    QString line = QStringLiteral("%1 bpm · %2").arg(bpm).arg(mood);
+    QString line = QStringLiteral("%1 bpm").arg(bpm);
+    if (!m_analysis.keyName.isEmpty()) line += QStringLiteral(" · %1").arg(m_analysis.keyName);
+    line += QStringLiteral(" · %1").arg(mood);
     if (drops > 0) line += QStringLiteral(" · %1 drop%2").arg(drops).arg(drops == 1 ? QString() : QStringLiteral("s"));
     if (!m_analysis.patAt.isEmpty()) line += QStringLiteral(" · has its own stutter");
     return line;

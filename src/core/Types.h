@@ -40,14 +40,27 @@ struct Section {
 // Output of the beat analyser.
 struct Analysis {
     QList<double> beats;
-    QList<double> energy;
-    QList<double> bright;
+    // Per-beat curves, parallel to `beats`: the internal shape the scheduler
+    // thresholds against. The track-level features live further down.
+    QList<double> beatEnergy;
+    QList<double> beatBright;
     QList<Section> sections;
     QList<double> patOffsets;
     QList<int> patAt;
     double bpm = 0;
     bool hasBpm = false;
     QString mood = QStringLiteral("mixed");
+
+    // ---- the track, as features ----------------------------------------
+    // Measured from the decoded audio, not looked up. 0..1 unless noted.
+    double energy = 0;        // loudness × onset density × brightness
+    double danceability = 0;  // how strongly the pulse repeats, and how regular it is
+    double valence = 0;       // dark .. bright: minor/major key, weighted by brightness
+    double brightness = 0;    // spectral centre of mass, 300 Hz = 0, 3.5 kHz = 1
+    double loudnessDb = -60;  // RMS of the whole track, dBFS
+    int keyPc = -1;           // 0 = C … 11 = B, -1 when it could not be told
+    bool major = true;
+    QString keyName;          // "A minor", empty when unknown
 
     bool valid() const { return beats.size() > 1; }
     void clear() { *this = Analysis(); }

@@ -28,6 +28,43 @@ int argMaxStrength(const QList<double> &s) {
 // Round to 3 decimals, the precision the scheduler thresholds were tuned at.
 inline double r3(double v) { return std::round(v * 1000.0) / 1000.0; }
 
+inline double clamp01(double v) { return std::max(0.0, std::min(1.0, v)); }
+
+// In-place radix-2 FFT. Small enough to keep here: one windowed copy per frame,
+// no dependencies, and the analyser already only ever sees a flat sample array.
+void fft(std::vector<double> &re, std::vector<double> &im) {
+    const int n = int(re.size());
+    for (int i = 1, j = 0; i < n; i++) {
+        int bit = n >> 1;
+        for (; j & bit; bit >>= 1) j ^= bit;
+        j ^= bit;
+        if (i < j) { std::swap(re[i], re[j]); std::swap(im[i], im[j]); }
+    }
+    for (int len = 2; len <= n; len <<= 1) {
+        const double ang = -2.0 * M_PI / len;
+        const double wr = std::cos(ang), wi = std::sin(ang);
+        for (int i = 0; i < n; i += len) {
+            double cr = 1, ci = 0;
+            for (int k = 0; k < len / 2; k++) {
+                const int a = i + k, b = i + k + len / 2;
+                const double xr = re[b] * cr - im[b] * ci;
+                const double xi = re[b] * ci + im[b] * cr;
+                re[b] = re[a] - xr; im[b] = im[a] - xi;
+                re[a] += xr; im[a] += xi;
+                const double nr = cr * wr - ci * wi;
+                ci = cr * wi + ci * wr;
+                cr = nr;
+            }
+        }
+    }
+}
+
+// Krumhansl-Kessler key profiles, tonic first. Correlating the chroma of a track
+// against all 24 rotations is the classic way to name its key and mode.
+const double kMajor[12] = {6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88};
+const double kMinor[12] = {6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17};
+const char *kNoteNames[12] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
+
 } // namespace
 
 bool Analyzer::decodeAudio(const QString &path, QList<float> &pcm, QString *error) {
@@ -137,7 +174,9 @@ Analysis Analyzer::analyze(const QList<float> &pcm, int sr) {
                 const double kk = std::round((beats[i] - A) / med);
                 const double target = A + kk * med;
                 const bool snap = std::fabs(beats[i] - target) <= 0.14 * med && beats[i] != A;
-                sB.append(snap ? std::round(target * 1000.0) / 1000.0 : beats[i]);
+                // Snapping back onto the pulse can land just before the start of
+                // the file; a negative beat time is not a thing.
+                sB.append(snap ? std::max(0.0, std::round(target * 1000.0) / 1000.0) : beats[i]);
                 sS.append(strengths[i]);
             }
             // Two onsets landing on the same slot: keep the stronger one.
@@ -180,11 +219,11 @@ Analysis Analyzer::analyze(const QList<float> &pcm, int sr) {
         QList<double> zs;
         double maxZ = 0;
         for (int bi = 0; bi < beats.size(); bi++) {
-            const int lo = int(std::floor(beats[bi] * sr));
+            const int lo = std::max(0, std::min(len, int(std::floor(beats[bi] * sr))));
             const double endT = bi + 1 < beats.size() ? beats[bi + 1] : beats[bi] + 0.5;
-            const int hi = std::min(len, int(std::floor(endT * sr)));
+            const int hi = std::max(lo, std::min(len, int(std::floor(endT * sr))));
             int flips = 0;
-            for (int k = lo + 1; k < hi; k++)
+            for (int k = std::max(1, lo + 1); k < hi; k++)
                 if ((pcm[k] >= 0) != (pcm[k - 1] >= 0)) flips++;
             const double z = flips / double(std::max(1, hi - lo));
             zs.append(z);
@@ -308,8 +347,141 @@ Analysis Analyzer::analyze(const QList<float> &pcm, int sr) {
         }
     }
 
+    // ---- track features ----------------------------------------------
+    // The same audio, read as the things a person would describe: how hard it
+    // hits, whether you can dance to it, whether it is dark or bright, how loud
+    // it is and what key it is in.
+    {
+        // loudness: RMS over the track, dBFS
+        double sumSq = 0;
+        for (int i = 0; i < len; i++) sumSq += double(pcm[i]) * double(pcm[i]);
+        const double rms = len > 0 ? std::sqrt(sumSq / len) : 0.0;
+        a.loudnessDb = rms > 0 ? std::round(20.0 * std::log10(rms) * 10.0) / 10.0 : -60.0;
+
+        // spectral pass: pitch classes (key, mode) and centre of mass (brightness)
+        const int N = 4096;
+        const int step = std::max(1, N / 2);
+        const int frames = len > N ? std::min(240, (len - N) / step + 1) : 0;
+        double chroma[12] = {0};
+        double centroid = 0, magTotal = 0;
+        std::vector<double> re(N), im(N), win(N);
+        for (int i = 0; i < N; i++) win[i] = 0.5 - 0.5 * std::cos(2.0 * M_PI * i / (N - 1));
+        for (int f = 0; f < frames; f++) {
+            const int off = f * step;
+            for (int i = 0; i < N; i++) {
+                re[i] = double(pcm[off + i]) * win[i];
+                im[i] = 0;
+            }
+            fft(re, im);
+            for (int k = 1; k < N / 2; k++) {
+                const double hz = double(k) * sr / N;
+                if (hz < 65.0 || hz > 2500.0) continue;
+                const double mag = std::sqrt(re[k] * re[k] + im[k] * im[k]);
+                const double midi = 69.0 + 12.0 * std::log2(hz / 440.0);
+                const int pc = ((int(std::lround(midi)) % 12) + 12) % 12;
+                chroma[pc] += mag;
+                centroid += hz * mag;
+                magTotal += mag;
+            }
+        }
+        a.brightness = magTotal > 0 ? r3(clamp01((centroid / magTotal - 300.0) / 3200.0)) : 0.0;
+
+        double chromaSum = 0;
+        for (double v : chroma) chromaSum += v;
+        if (chromaSum > 0) {
+            // Pearson correlation against the key profiles, not a raw dot product:
+            // without removing the mean, a key whose profile is simply loud where
+            // the chroma is loud wins (a C major triad scored as E minor that way).
+            const double chromaMean = chromaSum / 12.0;
+            double chromaVar = 0;
+            for (double v : chroma) chromaVar += (v - chromaMean) * (v - chromaMean);
+            double best = -1e9, second = -1e9;
+            int bestPc = 0;
+            bool bestMajor = true;
+            for (int rot = 0; rot < 12; rot++) {
+                for (int mode = 0; mode < 2; mode++) {
+                    const double *prof = mode == 0 ? kMajor : kMinor;
+                    double profMean = 0;
+                    for (int i = 0; i < 12; i++) profMean += prof[i];
+                    profMean /= 12.0;
+                    double profVar = 0;
+                    for (int i = 0; i < 12; i++) profVar += (prof[i] - profMean) * (prof[i] - profMean);
+                    double num = 0;
+                    for (int i = 0; i < 12; i++)
+                        num += (chroma[(rot + i) % 12] - chromaMean) * (prof[i] - profMean);
+                    const double den = std::sqrt(chromaVar * profVar);
+                    const double corr = den > 0 ? num / den : 0;
+                    if (corr > best) {
+                        second = best;
+                        best = corr;
+                        bestPc = rot;
+                        bestMajor = mode == 0;
+                    } else if (corr > second) {
+                        second = corr;
+                    }
+                }
+            }
+            // How far ahead the winning key is, on a scale where a 0.125
+            // correlation gap is a confident call. Dividing by `best` made every
+            // honest answer look uncertain.
+            const double conf = clamp01((best - std::max(0.0, second)) * 8.0);
+            a.keyPc = bestPc;
+            a.major = bestMajor;
+            a.keyName = QStringLiteral("%1 %2").arg(QString::fromLatin1(kNoteNames[bestPc]),
+                                                   bestMajor ? QStringLiteral("major") : QStringLiteral("minor"));
+            // Valence: the mode says most of it, how bright the mix is says the rest.
+            const double fromMode = bestMajor ? 0.5 + 0.5 * conf : 0.5 - 0.5 * conf;
+            a.valence = r3(clamp01(0.8 * fromMode + 0.2 * a.brightness));
+        } else {
+            a.valence = 0.5;
+        }
+
+        // danceability: does the onset envelope repeat at the beat period, and is
+        // the spacing regular? A four-to-the-floor track scores high on both.
+        double pulse = 0, regularity = 0;
+        if (beats.size() >= 4) {
+            QList<double> gaps;
+            for (int i = 1; i < beats.size(); i++) gaps.append(beats[i] - beats[i - 1]);
+            QList<double> sorted = gaps;
+            std::sort(sorted.begin(), sorted.end());
+            const double med = medianOfSorted(sorted);
+            if (med > 0.1) {
+                const int hopSec = double(hop) / sr;   // novelty frame, in seconds
+                const int lag = std::max(1, int(std::lround(med / hopSec)));
+                double ac0 = 0, acLag = 0;
+                for (int i = 0; i + lag < sm.size(); i++) {
+                    ac0 += sm[i] * sm[i];
+                    acLag += sm[i] * sm[i + lag];
+                }
+                if (ac0 > 0) pulse = clamp01(acLag / ac0);
+                double mean = 0;
+                for (double g : gaps) mean += g;
+                mean /= gaps.size();
+                double var = 0;
+                for (double g : gaps) var += (g - mean) * (g - mean);
+                var /= gaps.size();
+                const double cv = mean > 0 ? std::sqrt(var) / mean : 1;
+                regularity = clamp01(1.0 - cv * 2.0);
+            }
+        }
+        // A quiet or completely flat track has no pulse, whatever the beat
+        // detector made up out of noise: require both signal and contrast.
+        double smMean = 0, smMax = 0;
+        for (double v : sm) { smMean += v; smMax = std::max(smMax, v); }
+        smMean /= std::max<qsizetype>(1, sm.size());
+        const double contrast = smMean > 0 ? smMax / smMean : 0;
+        const bool real = a.loudnessDb > -40.0 && contrast > 2.0;
+        a.danceability = real ? r3(clamp01(0.65 * pulse + 0.35 * regularity)) : 0;
+
+        // energy: how loud it is, how many onsets it has, how bright it sounds
+        const double duration = sr > 0 ? double(len) / sr : 0;
+        const double loud01 = clamp01((a.loudnessDb + 40.0) / 34.0);
+        const double density01 = duration > 0 ? clamp01((beats.size() / duration) / 4.0) : 0;
+        a.energy = r3(clamp01(0.45 * loud01 + 0.35 * density01 + 0.2 * a.brightness));
+    }
+
     a.beats = beats;
-    a.energy = energy;
-    a.bright = bright;
+    a.beatEnergy = energy;
+    a.beatBright = bright;
     return a;
 }
