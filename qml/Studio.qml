@@ -146,27 +146,29 @@ ApplicationWindow {
     Rectangle {
         id: transport
         anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
-        height: 178
+        height: 152
         color: Theme.panel
 
         Rectangle { anchors.top: parent.top; width: parent.width; height: 1; color: Theme.line }
 
         ColumnLayout {
             anchors { fill: parent; margins: Theme.gap }
-            spacing: 10
+            spacing: 8
 
+            // One control row: transport, then the edit actions, then Generate.
             RowLayout {
-                spacing: 10
+                Layout.fillWidth: true
+                spacing: 8
 
                 Rectangle {
-                    width: 38; height: 38; radius: 19
+                    width: 36; height: 36; radius: 18
                     color: showCtl.playing ? Theme.accent : Theme.panelHi
                     border.color: showCtl.playing ? Theme.accent : Theme.line
                     Text {
                         anchors.centerIn: parent
-                        text: showCtl.playing ? "❚❚" : "▶"
+                        text: showCtl.playing ? "\u275A\u275A" : "\u25B6"
                         color: showCtl.playing ? "#141516" : Theme.ink
-                        font.pixelSize: 14
+                        font.pixelSize: 13
                     }
                     MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: studio.playPause() }
                 }
@@ -176,12 +178,12 @@ ApplicationWindow {
                     color: Theme.ink
                     font.pixelSize: 12
                     font.family: "monospace"
-                    Layout.leftMargin: 2
                 }
 
-                Slider {
+                DarkSlider {
                     id: scrub
                     Layout.fillWidth: true
+                    Layout.minimumWidth: 120
                     from: 0
                     to: Math.max(1, showCtl.duration)
                     // Dragging sets `value` imperatively, which would kill a plain
@@ -194,39 +196,23 @@ ApplicationWindow {
                         restoreMode: Binding.RestoreBindingOrValue
                     }
                     onMoved: studio.seek(value)
-                    background: Rectangle {
-                        x: scrub.leftPadding
-                        y: scrub.topPadding + scrub.availableHeight / 2 - height / 2
-                        width: scrub.availableWidth
-                        height: 3
-                        radius: 1.5
-                        color: Theme.line
-                        Rectangle {
-                            width: scrub.visualPosition * parent.width
-                            height: parent.height
-                            radius: 1.5
-                            color: Theme.accent
-                        }
-                        // Cut marks: you can see where the edit lands.
+
+                    // Cut marks over the track: you can see where the edit lands.
+                    Item {
+                        anchors.fill: parent
                         Repeater {
                             model: timeline.count
                             delegate: Rectangle {
                                 required property int index
-                                // Cut marks read from the timeline model directly:
-                                // the delegate has no implicit model role access here.
-                                readonly property double cutAt: timeline.cutTime(index)
-                                width: 1; height: 9
-                                x: showCtl.duration > 0 ? cutAt / showCtl.duration * parent.width : 0
-                                y: -3
-                                color: "#30ffffff"
+                                width: 1
+                                height: 5
+                                y: (parent.height - height) / 2
+                                x: scrub.leftPadding + (showCtl.duration > 0
+                                                        ? timeline.cutTime(index) / showCtl.duration
+                                                        : 0) * scrub.availableWidth
+                                color: "#40ffffff"
                             }
                         }
-                    }
-                    handle: Rectangle {
-                        x: scrub.leftPadding + scrub.visualPosition * (scrub.availableWidth - width)
-                        y: scrub.topPadding + scrub.availableHeight / 2 - height / 2
-                        width: 12; height: 12; radius: 6
-                        color: Theme.ink
                     }
                 }
 
@@ -239,8 +225,17 @@ ApplicationWindow {
 
                 Rectangle { Layout.preferredWidth: 1; implicitHeight: 18; color: Theme.line; Layout.leftMargin: 2; Layout.rightMargin: 2 }
 
-                // Volume: the song is the master clock, so its level is the one
-                // control that matters while the show plays.
+                // Edit actions, left to right in the order you reach for them.
+                IconButton { glyph: "\u2212"; tip: "Shorten"; enabled: timeline.selected >= 0; onClicked: timeline.shorten() }
+                IconButton { glyph: "+"; tip: "Lengthen"; enabled: timeline.selected >= 0; onClicked: timeline.lengthen() }
+                IconButton { glyph: "\u2702"; tip: "Chop in half"; enabled: timeline.selected >= 0; onClicked: timeline.chop() }
+                IconButton { glyph: "\u25CE"; tip: "New in-point"; enabled: timeline.selected >= 0; onClicked: timeline.rerollIn() }
+                IconButton { glyph: "\u21C4"; tip: "Swap clip"; enabled: timeline.selected >= 0; onClicked: timeline.swap() }
+                IconButton { glyph: "\u2715"; tip: "Delete segment"; enabled: timeline.selected >= 0; onClicked: timeline.remove() }
+                IconButton { glyph: "\u27F3"; tip: "Re-roll every in-point"; enabled: timeline.count > 0; onClicked: timeline.rerollAll() }
+
+                Rectangle { Layout.preferredWidth: 1; implicitHeight: 18; color: Theme.line; Layout.leftMargin: 2; Layout.rightMargin: 2 }
+
                 Text {
                     text: "vol"
                     color: Theme.faint
@@ -249,7 +244,7 @@ ApplicationWindow {
                 }
                 DarkSlider {
                     id: vol
-                    Layout.preferredWidth: 76
+                    Layout.preferredWidth: 70
                     Layout.alignment: Qt.AlignVCenter
                     from: 0
                     to: 100
@@ -264,38 +259,12 @@ ApplicationWindow {
                     onMoved: studio.volume = value
                 }
 
-                Rectangle { Layout.preferredWidth: 1; implicitHeight: 18; color: Theme.line; Layout.leftMargin: 2; Layout.rightMargin: 2 }
-
                 SmallButton {
                     text: "Generate"
                     enabled: !studio.busy && studio.songAnalysed
                     onClicked: studio.generate()
                 }
                 SmallButton { text: "Stop"; flat: true; onClicked: studio.stopShow() }
-            }
-
-            // Editing toolbar: above the strip, icons only. The controls stay put
-            // and disable themselves, so the strip never jumps.
-            RowLayout {
-                Layout.fillWidth: true
-                spacing: 2
-
-                Text {
-                    text: timeline.selected >= 0 ? timeline.selectionInfo
-                                                 : (timeline.hasTimeline ? timeline.stats : "No edit yet")
-                    color: timeline.selected >= 0 ? Theme.dim : Theme.faint
-                    font.pixelSize: 11
-                    elide: Text.ElideRight
-                    Layout.fillWidth: true
-                }
-                IconButton { glyph: "\u2212"; tip: "Shorten"; enabled: timeline.selected >= 0; onClicked: timeline.shorten() }
-                IconButton { glyph: "+"; tip: "Lengthen"; enabled: timeline.selected >= 0; onClicked: timeline.lengthen() }
-                IconButton { glyph: "\u2702"; tip: "Chop in half"; enabled: timeline.selected >= 0; onClicked: timeline.chop() }
-                IconButton { glyph: "\u25CE"; tip: "New in-point"; enabled: timeline.selected >= 0; onClicked: timeline.rerollIn() }
-                IconButton { glyph: "\u21C4"; tip: "Swap clip"; enabled: timeline.selected >= 0; onClicked: timeline.swap() }
-                IconButton { glyph: "\u2715"; tip: "Delete segment"; enabled: timeline.selected >= 0; onClicked: timeline.remove() }
-                Rectangle { Layout.preferredWidth: 1; implicitHeight: 16; color: Theme.line; Layout.leftMargin: 6; Layout.rightMargin: 6 }
-                IconButton { glyph: "\u27F3"; tip: "Re-roll every in-point"; enabled: timeline.count > 0; onClicked: timeline.rerollAll() }
             }
 
             // The strip: segments with real thumbnails, selectable for editing.
@@ -395,12 +364,11 @@ ApplicationWindow {
                 Text {
                     anchors.centerIn: parent
                     visible: timeline.count === 0
-                    text: studio.busy ? "Building the pool…" : "Pick a song and a look, then press Generate"
+                    text: studio.busy ? studio.progressLabel : "Pick a song and a look, then press Generate"
                     color: Theme.faint
-                    font.pixelSize: 13
+                    font.pixelSize: 12
                 }
             }
-
         }
     }
 

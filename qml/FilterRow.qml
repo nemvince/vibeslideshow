@@ -19,22 +19,25 @@ Item {
         font.pixelSize: 11
         elide: Text.ElideRight
     }
+    // Smaller than a stock switch: this is a quiet filter list, not a settings
+    // page. Track and knob stay low-contrast until switched on.
     Switch {
         id: sw
         anchors { right: parent.right; verticalCenter: parent.verticalCenter }
         checked: row.checked
-        implicitHeight: 18
-        implicitWidth: 34
+        implicitHeight: 16
+        implicitWidth: 28
         indicator: Rectangle {
-            implicitWidth: 32
-            implicitHeight: 16
-            radius: 8
-            color: sw.checked ? Theme.accent : Theme.line
+            implicitWidth: 28
+            implicitHeight: 14
+            radius: 7
+            color: sw.checked ? Theme.accent : Theme.panelHi
+            border.color: sw.checked ? Theme.accent : Theme.line
             Rectangle {
-                width: 12; height: 12; radius: 6
+                width: 10; height: 10; radius: 5
                 y: 2
                 x: sw.checked ? parent.width - width - 2 : 2
-                color: sw.checked ? "#141516" : Theme.dim
+                color: sw.checked ? "#141516" : Theme.faint
                 Behavior on x { NumberAnimation { duration: 120 } }
             }
         }

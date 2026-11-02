@@ -301,6 +301,7 @@ void Studio::loadProfile(const QString &name) {
     emit paramsChanged();
     emit activePresetChanged();
     emit filtersChanged();
+    emit advancedChanged();
     persist();
     setStatus(QStringLiteral("Loaded look “%1”").arg(name));
 }
@@ -609,6 +610,7 @@ void Studio::applyPreset(const QString &name) {
         emit activePresetChanged();
         emit paramsChanged();
         emit presetsChanged();
+        emit advancedChanged();
         persist();
         setStatus(QStringLiteral("Look: %1").arg(p.blurb));
         return;
@@ -639,6 +641,7 @@ void Studio::restoreDefaults() {
     emit activePresetChanged();
     emit paramsChanged();
     emit presetsChanged();
+    emit advancedChanged();
     persist();
 }
 

@@ -63,9 +63,9 @@ Rectangle {
             right: parent.right
             bottom: parent.bottom
             leftMargin: 16
-            // Room for the scrollbar, which is placed outside this area: it must
-            // never sit on top of a control or a label.
-            rightMargin: 22
+            // The bar hugs the panel edge; the content column below stops short of
+            // it, so nothing is ever drawn underneath.
+            rightMargin: 8
             topMargin: 4
         }
         visible: !panel.collapsed
@@ -86,8 +86,8 @@ Rectangle {
 
         ColumnLayout {
             id: body
-            // 8 px stay clear of the scrollbar, so it never sits on a control.
-            width: parent.width - 8
+            // Leave the scrollbar its own lane: it never sits on a control.
+            width: parent.width - 10
             spacing: 4
 
             // ---- look ---------------------------------------------------
@@ -287,14 +287,12 @@ Rectangle {
 
                 Repeater {
                     model: studio.advanced
-                    delegate: Column {
+                    delegate: ColumnLayout {
                         id: advRow
                         required property int index
                         required property var model
                         Layout.fillWidth: true
-                        spacing: 3
-                        topPadding: 2
-                        bottomPadding: 2
+                        spacing: 2
 
                         RowLayout {
                             Layout.fillWidth: true
@@ -307,7 +305,10 @@ Rectangle {
                             }
                             Text {
                                 visible: advRow.model.kind === "number"
-                                text: advRow.model.value
+                                text: {
+                                    const v = studio.params[advRow.model.key]
+                                    return v === undefined ? advRow.model.value : v
+                                }
                                 color: Theme.faint
                                 font.pixelSize: 10
                                 font.family: "monospace"
@@ -316,16 +317,23 @@ Rectangle {
                         DarkSlider {
                             visible: advRow.model.kind === "number"
                             Layout.fillWidth: true
+                            implicitHeight: 22
                             from: advRow.model.min
                             to: advRow.model.max
                             stepSize: advRow.model.step
-                            value: advRow.model.value
                             fillColor: Theme.dim
+                            // Follows the parameter until the user grabs it; a drag
+                            // is never interrupted because a single edit does not
+                            // rebuild this list.
+                            value: {
+                                const v = studio.params[advRow.model.key]
+                                return v === undefined ? advRow.model.value : v
+                            }
                             onMoved: studio.setParam(advRow.model.key, value)
                         }
                         Switch {
                             visible: advRow.model.kind === "check"
-                            checked: advRow.model.value === true
+                            checked: studio.params[advRow.model.key] === true
                             onToggled: studio.setParam(advRow.model.key, checked)
                         }
                         TextField {
@@ -333,7 +341,10 @@ Rectangle {
                             Layout.fillWidth: true
                             implicitHeight: 26
                             font.pixelSize: 10
-                            text: advRow.model.value ? String(advRow.model.value) : ""
+                            text: {
+                                const v = studio.params[advRow.model.key]
+                                return v === undefined ? "" : String(v)
+                            }
                             color: Theme.ink
                             background: Rectangle { color: Theme.bg; radius: 5; border.color: Theme.line }
                             onEditingFinished: studio.setParam(advRow.model.key, text)
