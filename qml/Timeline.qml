@@ -46,10 +46,16 @@ Item {
     function setZoom(z) {
         const next = Math.max(1, Math.min(maxZoom, z))
         if (Math.abs(next - zoom) < 0.001) return
-        // Keep the moment in the middle of the view in the middle of the view.
-        const centre = timeAt(flick.contentX + width / 2)
+        // Anchor on the seek head, not on the middle of the window: zooming in
+        // walks into the music around the playhead, which is the part you are
+        // working on. Where the head sits in the view is where it stays; if it is
+        // off screen (you scrolled away), it is brought back to the middle.
+        const headX = progressFrac * contentWidth;
+        const offset = headX - flick.contentX;
+        const onScreen = offset >= 0 && offset <= width;
+        const frac = onScreen ? Math.max(0.04, Math.min(0.96, offset / Math.max(1, width))) : 0.5;
         zoom = next
-        flick.contentX = Math.max(0, Math.min(maxScroll, xAt(centre) - width / 2))
+        flick.contentX = Math.max(0, Math.min(maxScroll, progressFrac * contentWidth - frac * width))
     }
     function zoomIn() { setZoom(zoom * 1.6) }
     function zoomOut() { setZoom(zoom / 1.6) }
