@@ -45,24 +45,6 @@ jobs:
           echo "Qt: $(command -v qmake6 || command -v qmake || echo none)"
           pkg-config --modversion mpv
 
-      - name: Install Qt 6
-        run: |
-          pacman -S --needed --noconfirm \
-            mingw-w64-ucrt-x86_64-qt6-base \
-            mingw-w64-ucrt-x86_64-qt6-declarative \
-          || {
-            echo "falling back to the qt6 metapackage"
-            pacman -S --needed --noconfirm mingw-w64-ucrt-x86_64-qt6
-          }
-
-      - name: Environment
-        run: |
-          bash --version | head -1
-          cmake --version | head -1
-          echo "MINGW_PREFIX=$MINGW_PREFIX"
-          pkgconf --modversion mpv || echo "no mpv.pc"
-          command -v windeployqt || echo "no windeployqt"
-
       - name: Build
         run: bash scripts/build.sh --release 2>&1 | tee build.log
 

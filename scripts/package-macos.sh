@@ -70,7 +70,8 @@ else
 fi
 
 # ---- 4. zip + dmg --------------------------------------------------------
-rm -rf "dist/$NAME" "dist/$NAME.zip" "dist/$NAME.dmg"
+# Only stale archives: "dist/$NAME" IS the payload in the no-bundle case.
+rm -rf "dist/$NAME.zip" "dist/$NAME.dmg"
 mkdir -p dist
 if [ -d "$APP" ]; then
     ditto -c -k --sequesterRsrc --keepParent "$APP" "dist/$NAME.zip"
