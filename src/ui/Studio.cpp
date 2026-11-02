@@ -47,6 +47,64 @@ QVariantMap filtersToMap(const Filters &f) {
     return m;
 }
 
+// A location mounted through Nautilus/Dolphin (SMB, SFTP, NFS, WebDAV) comes
+// back from the file picker as a URL, not a local path, and the only thing this
+// app can scan is the FUSE mount GVFS creates for it under $XDG_RUNTIME_DIR.
+// Map the URL onto that mount: "smb://nas/media/trip" becomes
+// "/run/user/1000/gvfs/smb-share:server=nas,share=media/trip".
+QString resolveGvfs(const QUrl &url) {
+    static const QStringList remoteSchemes = {
+        QStringLiteral("smb"), QStringLiteral("sftp"), QStringLiteral("ftp"),
+        QStringLiteral("nfs"), QStringLiteral("dav"), QStringLiteral("davs"),
+        QStringLiteral("afp"), QStringLiteral("ssh")};
+    const QString scheme = url.scheme().toLower();
+    if (!remoteSchemes.contains(scheme)) return {};
+
+    const QString runtime = qEnvironmentVariable("XDG_RUNTIME_DIR");
+    if (runtime.isEmpty()) return {};
+    const QString gvfs = runtime + QStringLiteral("/gvfs");
+    const QDir mounts(gvfs);
+    if (!mounts.exists()) return {};
+
+    const QString host = url.host().toLower();
+    if (host.isEmpty()) return {};
+    const QStringList segs = url.path().split(QLatin1Char('/'), Qt::SkipEmptyParts);
+
+    // Mount directory names look like "smb-share:server=nas,share=media" or
+    // "sftp:host=box,user=me". Match the host, and prefer the share named by the
+    // first path segment.
+    QString best;
+    for (const QString &name : mounts.entryList(QDir::Dirs | QDir::NoDotAndDotDot)) {
+        const QString lower = name.toLower();
+        if (!lower.startsWith(scheme)) continue;
+        if (!lower.contains(QStringLiteral("server=") + host) &&
+            !lower.contains(QStringLiteral("host=") + host)) continue;
+        if (!segs.isEmpty() && lower.contains(QStringLiteral("share=") + segs.first().toLower())) {
+            best = name;
+            break;
+        }
+        if (best.isEmpty()) best = name;
+    }
+    if (best.isEmpty()) return {};
+
+    QString path = gvfs + QLatin1Char('/') + best;
+    // The share is part of the mount name, not of the path inside it.
+    int first = 0;
+    if (!segs.isEmpty() && best.toLower().contains(QStringLiteral("share=") + segs.first().toLower())) first = 1;
+    for (int i = first; i < segs.size(); i++) path += QLatin1Char('/') + segs[i];
+    return path;
+}
+
+// The one place a picker URL becomes something the library can walk.
+QString localPathFor(const QUrl &url) {
+    if (url.isLocalFile()) return url.toLocalFile();
+    const QString mounted = resolveGvfs(url);
+    if (!mounted.isEmpty()) return mounted;
+    // Not a URL at all (a plain path handed over by a script or a saved session).
+    if (url.scheme().isEmpty()) return url.toString();
+    return {};
+}
+
 // Inverse of filtersToMap: one place that knows the shape, so a filter saved in
 // params.json, a saved look and the live UI can never drift apart.
 Filters filtersFromMap(const QVariantMap &m) {
@@ -257,13 +315,26 @@ int Studio::scoreDone() const { return m_lib ? m_lib->scoreDone() : 0; }
 int Studio::scoreTotal() const { return m_lib ? m_lib->scoreTotal() : 0; }
 
 void Studio::startIndexing(const QStringList &dirs) {
-    m_dirs.clear();
+    // Keep the list the caller gave us. Validating here and discarding what does
+    // not stat *yet* is how a network mount (slow FUSE, GVFS) disappeared from
+    // the UI the moment it was added: the row was emitted, then removed.
+    QStringList clean;
     for (const QString &d : dirs) {
-        const QFileInfo fi(d);
-        if (fi.exists() && fi.isDir()) m_dirs.append(fi.absoluteFilePath());
+        if (d.isEmpty()) continue;
+        const QString abs = QFileInfo(d).absoluteFilePath();
+        if (!clean.contains(abs)) clean.append(abs);
     }
+    m_dirs = clean;
     emit videoDirsChanged();
-    if (m_dirs.isEmpty()) return;
+
+    if (m_dirs.isEmpty()) {
+        m_lib->setDirs(QStringList());
+        m_lib->reset();
+        setBusy(false);
+        setStatus(QStringLiteral("Add a footage folder to begin"));
+        persist();
+        return;
+    }
     setBusy(true);
     setStatus(QStringLiteral("Indexing %1 folder(s)…").arg(m_dirs.size()));
     m_lib->setDirs(m_dirs);
@@ -272,19 +343,26 @@ void Studio::startIndexing(const QStringList &dirs) {
 }
 
 void Studio::addFolder(const QUrl &url) {
-    const QString dir = url.isLocalFile() ? url.toLocalFile() : url.toString();
-    const QFileInfo fi(dir);
-    if (!fi.exists() || !fi.isDir()) {
-        setStatus(QStringLiteral("Not a folder: %1").arg(dir));
+    const QString dir = localPathFor(url);
+    if (dir.isEmpty()) {
+        setStatus(QStringLiteral("That location has no path this app can read: %1").arg(url.toString()));
         return;
     }
-    if (m_dirs.contains(fi.absoluteFilePath())) {
+    const QFileInfo fi(dir);
+    if (!fi.exists() || !fi.isDir()) {
+        // A remote mount that GVFS has not materialised yet, or a stale saved
+        // location: say so instead of doing nothing visible.
+        setStatus(QStringLiteral("Cannot open %1 — is the network drive mounted?").arg(dir));
+        return;
+    }
+    const QString abs = fi.absoluteFilePath();
+    if (m_dirs.contains(abs)) {
         // Already known: honour the click as "scan it again" instead of nothing.
         setStatus(QStringLiteral("Rescanning %1").arg(fi.fileName()));
         startIndexing(m_dirs);
         return;
     }
-    m_dirs.append(fi.absoluteFilePath());
+    m_dirs.append(abs);
     emit videoDirsChanged();
     startIndexing(m_dirs);
 }
@@ -346,7 +424,11 @@ QString Studio::songSummary() const {
 }
 
 void Studio::loadSong(const QUrl &url) {
-    const QString path = url.isLocalFile() ? url.toLocalFile() : url.toString();
+    const QString path = localPathFor(url);
+    if (path.isEmpty()) {
+        setStatus(QStringLiteral("That location has no path this app can read: %1").arg(url.toString()));
+        return;
+    }
     loadSongFile(path);
 }
 
