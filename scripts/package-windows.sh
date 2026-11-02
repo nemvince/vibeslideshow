@@ -147,6 +147,28 @@ else
     echo "package-windows: warning: cannot read %SYSTEMROOT%\System32, skipping the system-DLL check" >&2
 fi
 
+# Every import of every staged binary must be either bundled here or provided by
+# Windows. A plugin whose dependency is missing does not say which one: Qt reports
+# it as "plugin not found", which is true and useless. This names the DLL.
+missing=""
+check_imports() {
+    local file="$1" imp
+    while read -r imp; do
+        [ -n "$imp" ] || continue
+        [ -f "$STAGE/$imp" ] && continue
+        [ -n "$SYSTEM32" ] && [ -f "$SYSTEM32/$imp" ] && continue
+        missing+="  ${file#"$STAGE"/} needs $imp"$'\n'
+    done < <(objdump -p "$file" 2>/dev/null | awk '/DLL Name:/{print $3}')
+}
+while IFS= read -r binary; do
+    check_imports "$binary"
+done < <(find "$STAGE" -maxdepth 4 \( -name '*.dll' -o -name '*.exe' \) -type f)
+if [ -n "$missing" ]; then
+    echo "package-windows: the bundle is missing dependencies:" >&2
+    printf '%s' "$missing" >&2
+    exit 1
+fi
+
 # Assert the pieces this bundle has broken on before, so a regression fails the
 # packaging step with a clear message instead of shipping a dead download.
 for required in \

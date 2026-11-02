@@ -298,7 +298,10 @@ jobs:
             build.log
             app.log
 
+      # Uploaded even when the smoke test fails: a bundle that will not start is
+      # exactly the one worth having on hand.
       - uses: actions/upload-artifact@v7
+        if: always()
         with:
           name: windows-x86_64
           path: dist/*.zip
