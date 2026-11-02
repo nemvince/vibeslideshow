@@ -160,6 +160,27 @@ jobs:
       - name: Package
         run: bash scripts/package.sh --macos --no-build
 
+      # The build-tree smoke test ran before packaging. macdeployqt rewrites the
+      # bundle's frameworks, so that .app and this one are different programs.
+      - name: Smoke test the bundle
+        run: |
+          set -e
+          APP="$(ls -d dist/*.app 2>/dev/null | head -1)"
+          [ -n "$APP" ] || APP="$(ls -d build/*.app | head -1)"
+          echo "== app: $APP"
+          BIN="$APP/Contents/MacOS/vibeslideshow"
+          [ -x "$BIN" ] || { echo "no binary in $APP"; exit 1; }
+          "$BIN" --version
+          "$BIN" > /tmp/bundle.log 2>&1 &
+          pid=$!
+          sleep 10
+          if kill -0 "$pid" 2>/dev/null; then
+            kill "$pid"; echo "bundle stayed up for 10s: ok"
+          else
+            wait "$pid"; code=$?
+            echo "bundle exited early (code $code)"; tail -30 /tmp/bundle.log; exit 1
+          fi
+
       - uses: actions/upload-artifact@v7
         if: failure()
         with:

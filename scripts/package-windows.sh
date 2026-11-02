@@ -44,8 +44,12 @@ cp -f README.md LICENSE "$STAGE/"
 # Qt, and the plugins/QML modules it needs.
 WINDEPLOYQT="$(command -v windeployqt.exe || command -v windeployqt || true)"
 [ -n "$WINDEPLOYQT" ] || { echo "package-windows: windeployqt not found" >&2; exit 1; }
+# opengl32sw.dll is kept on purpose: the app asks for the OpenGL backend, so on a
+# machine whose GL driver is missing or refused (remote sessions, old GPUs, a
+# CI runner with no GPU at all) Qt needs its own software renderer to fall back
+# to. Without it that startup is a black window or nothing at all.
 "$WINDEPLOYQT" --release --no-translations --no-compiler-runtime --no-system-d3d-compiler \
-               --no-opengl-sw --qmldir qml "$STAGE/vibeslideshow.exe"
+               --qmldir qml "$STAGE/vibeslideshow.exe"
 phase "windeployqt"
 
 # ffmpeg/ffprobe ride along: the app shells out to them, and an app started from
