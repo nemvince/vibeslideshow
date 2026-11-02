@@ -3,6 +3,8 @@
 #include "core/Library.h"
 #include "core/Scheduler.h"
 #include "core/Analyzer.h"
+#include "core/Exporter.h"
+#include "core/RenderPlan.h"
 #include "player/Show.h"
 #include "ui/ClipModel.h"
 #include "ui/TimelineModel.h"
@@ -10,6 +12,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QHash>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
@@ -144,6 +147,7 @@ Studio::Studio(QObject *parent) : QObject(parent) {
     m_clips = new ClipModel(this);
     m_timeline = new TimelineModel(this);
     m_show = new Show(this);
+    m_exporter = new Exporter(this);
 
     m_timeline->setLibrary(m_lib);
     m_timeline->setScheduler(m_sched.get());
@@ -165,6 +169,15 @@ Studio::Studio(QObject *parent) : QObject(parent) {
         if (m_keepEditOnIndex) {
             m_keepEditOnIndex = false;
             return;
+        }
+        // A project that was just opened brings its own edit; the scan it started
+        // is what makes that edit resolvable, not a reason to cut a new one.
+        if (m_docOpen) {
+            m_docOpen = false;
+            if (!m_pendingDocSegs.isEmpty()) {
+                applyPendingDocEdit();
+                return;
+            }
         }
         // The index was just rebuilt, and every clip id with it. An edit cut from
         // the old index no longer names the clips it was built from, so recut it
@@ -211,6 +224,21 @@ Studio::Studio(QObject *parent) : QObject(parent) {
     });
     connect(m_timeline, &TimelineModel::countChanged, this, [this]() { emit editChanged(); });
 
+    connect(m_exporter, &Exporter::progress, this, [this](double frac, const QString &what) {
+        m_exportProgress = frac;
+        m_exportStatus = what;
+        emit exportChanged();
+    });
+    connect(m_exporter, &Exporter::finished, this, [this](bool ok, const QString &message) {
+        m_exportProgress = ok ? 1.0 : m_exportProgress;
+        m_exportStatus = ok ? QStringLiteral("Exported %1").arg(QFileInfo(message).fileName())
+                            : message;
+        emit exportChanged();
+        // The status line is the app's one place for outcomes, and a finished
+        // render is an outcome even when the window it started from has closed.
+        setStatus(m_exportStatus);
+    });
+
     syncScheduler();
     refreshProfiles();
     restoreSession();
@@ -250,12 +278,22 @@ void Studio::restoreSession() {
     // Params and sources are the document: restoring them is what makes the app
     // reopen where the user left off.
     QFile pf(configDir() + QStringLiteral("/params.json"));
-    if (pf.open(QIODevice::ReadOnly)) {
-        const QJsonObject o = QJsonDocument::fromJson(pf.readAll()).object();
-        m_params.applyMap(o.value("params").toObject().toVariantMap());
-        setActiveLook(o.value("preset").toString(), QString());
-        if (o.contains("sources")) {
-            for (const auto &v : o.value("sources").toArray()) {
+    QJsonObject session;
+    if (pf.open(QIODevice::ReadOnly))
+        session = QJsonDocument::fromJson(pf.readAll()).object();
+
+    // A project file wins: it carries the footage, the look and the edit, so the
+    // session's own copy of all three is not consulted when it opens.
+    const QString remembered = session.value("document").toString();
+    if (!remembered.isEmpty() && QFileInfo::exists(remembered) &&
+        openDocument(QUrl::fromLocalFile(remembered)))
+        return;
+
+    if (!session.isEmpty()) {
+        m_params.applyMap(session.value("params").toObject().toVariantMap());
+        setActiveLook(session.value("preset").toString(), QString());
+        if (session.contains("sources")) {
+            for (const auto &v : session.value("sources").toArray()) {
                 const QJsonObject so = v.toObject();
                 const QString path = so.value("path").toString();
                 if (path.isEmpty()) continue;
@@ -263,21 +301,21 @@ void Studio::restoreSession() {
             }
         } else {
             // A session file from before the bin: every entry was a folder.
-            for (const auto &d : o.value("dirs").toArray()) {
+            for (const auto &d : session.value("dirs").toArray()) {
                 const QString path = d.toString();
                 if (path.isEmpty()) continue;
                 m_sources.append({path, true});
             }
         }
-        for (const auto &h : o.value("hidden").toArray()) {
+        for (const auto &h : session.value("hidden").toArray()) {
             const QString path = h.toString();
             if (!path.isEmpty()) m_hidden.insert(path);
         }
-        applyPreviewHeight(o.value("previewHeight").toInt());
-        const QString song = o.value("song").toString();
+        applyPreviewHeight(session.value("previewHeight").toInt());
+        const QString song = session.value("song").toString();
         if (!song.isEmpty() && QFileInfo::exists(song)) m_song = song;
         // Filters ride along so a reopened app shows the same pool.
-        const QJsonObject fo = o.value("filters").toObject();
+        const QJsonObject fo = session.value("filters").toObject();
         if (!fo.isEmpty()) applyFilters(fo.toVariantMap());
         m_clips->setFilters(m_filters);
         emit paramsChanged();
@@ -314,6 +352,7 @@ void Studio::persist() {
     o["hidden"] = hidden;
     o["previewHeight"] = m_previewHeight;
     o["song"] = m_song;
+    o["document"] = m_docPath;
     o["filters"] = QJsonObject::fromVariantMap(filtersToMap(m_filters));
     QFile f(configDir() + QStringLiteral("/params.json"));
     if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) return;
@@ -667,6 +706,145 @@ void Studio::openFilesDialog() { emit filesDialogRequested(); }
 
 void Studio::openSongDialog() { emit songDialogRequested(); }
 
+// ---- projects ------------------------------------------------------------
+
+QString Studio::documentName() const {
+    return m_docPath.isEmpty() ? QString() : QFileInfo(m_docPath).completeBaseName();
+}
+
+void Studio::newDocument() {
+    // The footage and the song stay: they are the user's material. What a new
+    // project resets is the edit and the file it was saved to.
+    m_show->stop();
+    m_pendingDocSegs.clear();
+    m_docOpen = false;
+    m_timeline->adoptEdit({}, {});
+    m_docPath.clear();
+    emit documentChanged();
+    emit editChanged();
+    persist();
+    setStatus(QStringLiteral("New project"));
+}
+
+void Studio::openDocumentDialog() { emit documentOpenRequested(); }
+
+void Studio::saveAsDialog() { emit documentSaveRequested(); }
+
+bool Studio::saveDocumentTo(const QUrl &url) {
+    const QString path = localPathFor(url);
+    if (path.isEmpty()) {
+        setStatus(QStringLiteral("That location has no path this app can write: %1").arg(url.toString()));
+        return false;
+    }
+    Document d;
+    d.song = m_song;
+    d.sources = m_sources;
+    d.hidden = m_hidden;
+    d.params = m_params.toMap();
+    d.preset = m_activePreset;
+    d.filters = filtersToMap(m_filters);
+    d.previewHeight = m_previewHeight;
+    // The edit names clips by path: ids belong to this session's index only.
+    const QList<TlSeg> &segs = m_timeline->segments();
+    const QList<double> &fades = m_timeline->fades();
+    for (int i = 0; i < segs.size(); i++) {
+        const Clip *c = m_lib ? m_lib->clipById(segs[i].id) : nullptr;
+        if (!c) continue;
+        DocSeg ds;
+        ds.path = c->path;
+        ds.in = segs[i].s;
+        ds.len = segs[i].len;
+        ds.fadeMs = fades.value(i, 0);
+        ds.move = segs[i].move;
+        d.segments.append(ds);
+    }
+    QString err;
+    if (!saveDocument(path, d, &err)) {
+        setStatus(err);
+        return false;
+    }
+    m_docPath = path;
+    emit documentChanged();
+    persist();
+    setStatus(QStringLiteral("Saved %1").arg(QFileInfo(path).fileName()));
+    return true;
+}
+
+bool Studio::openDocument(const QUrl &url) {
+    const QString path = localPathFor(url);
+    if (path.isEmpty()) {
+        setStatus(QStringLiteral("That location has no path this app can read: %1").arg(url.toString()));
+        return false;
+    }
+    Document d;
+    QString err;
+    if (!loadDocument(path, &d, &err)) {
+        setStatus(err);
+        return false;
+    }
+
+    m_show->stop();
+    m_pendingDocSegs.clear();
+    m_sources = d.sources;
+    m_hidden = d.hidden;
+    applyPreviewHeight(d.previewHeight);
+    m_params.applyMap(d.params);
+    setActiveLook(d.preset, QString());
+    applyFilters(d.filters);
+    m_clips->setFilters(m_filters);
+    emit sourcesChanged();
+    emit paramsChanged();
+    emit filtersChanged();
+
+    m_docPath = path;
+    emit documentChanged();
+    m_pendingDocSegs = d.segments;
+    m_docOpen = true;
+
+    // The song may be a different one: its analysis is what the edit was cut to,
+    // and it must land before the scan's result is applied.
+    if (!d.song.isEmpty() && (d.song != m_song || !m_analysis.valid())) loadSongFile(d.song);
+    startIndexing();
+    setStatus(QStringLiteral("Opened %1").arg(QFileInfo(path).fileName()));
+    return true;
+}
+
+void Studio::applyPendingDocEdit() {
+    if (m_pendingDocSegs.isEmpty()) return;
+    QHash<QString, int> idFor;
+    for (const Clip &c : m_lib->clips()) idFor.insert(QFileInfo(c.path).absoluteFilePath(), c.id);
+
+    QList<TlSeg> segs;
+    QList<double> fades;
+    int dropped = 0;
+    double total = 0;
+    for (const DocSeg &d : m_pendingDocSegs) {
+        const auto it = idFor.constFind(QFileInfo(d.path).absoluteFilePath());
+        if (it == idFor.constEnd()) {   // footage that is not on disk any more
+            dropped++;
+            continue;
+        }
+        TlSeg s;
+        s.id = *it;
+        s.s = d.in;
+        s.len = d.len;
+        s.move = d.move;
+        segs.append(s);
+        fades.append(d.fadeMs);
+        total += d.len;
+    }
+    m_pendingDocSegs.clear();
+    // The song's length is the authority; before the analysis has landed the edit's
+    // own length is the only number there is.
+    if (m_timeline->songDuration() <= 0 && total > 0) m_timeline->setSongDuration(total);
+    m_timeline->adoptEdit(segs, fades);
+    emit editChanged();
+    if (dropped > 0)
+        setStatus(QStringLiteral("Could not find %1 clip(s) from the project").arg(dropped));
+    else
+        setStatus(QStringLiteral("Opened %1").arg(QFileInfo(m_docPath).fileName()));
+}
+
 void Studio::reloadLibraryModel() {
     m_clips->setLibrary(m_lib);
     m_clips->refresh();
@@ -757,7 +935,8 @@ void Studio::loadSongFile(const QString &path) {
             setStatus(songSummary());
             emit editChanged();
             persist();
-            generate();
+            // An opened project's edit is its own; only a fresh session cuts one.
+            if (!m_docOpen) generate();
         }, Qt::QueuedConnection);
     });
     connect(t, &QThread::finished, t, &QObject::deleteLater);
@@ -907,6 +1086,40 @@ void Studio::generate() {
     emit editChanged();
     setStatus(QStringLiteral("%1 cuts from %2 clips").arg(m_timeline->rowCount()).arg(pool.size()));
 }
+
+// ---- export --------------------------------------------------------------
+
+bool Studio::exporting() const { return m_exporter && m_exporter->busy(); }
+
+void Studio::openExportDialog() { emit exportDialogRequested(); }
+
+void Studio::exportVideo(const QUrl &file, int quality) {
+    const QString out = localPathFor(file);
+    if (m_timeline->segments().isEmpty()) {
+        setStatus(QStringLiteral("Cut an edit first"));
+        return;
+    }
+    if (m_song.isEmpty()) {
+        setStatus(QStringLiteral("Choose a song first"));
+        return;
+    }
+    if (out.isEmpty()) {
+        setStatus(QStringLiteral("That location has no path this app can write: %1").arg(file.toString()));
+        return;
+    }
+    Exporter::Options opt;
+    opt.quality = quality <= 0   ? Exporter::Quality::Draft
+                  : quality >= 2 ? Exporter::Quality::High
+                                 : Exporter::Quality::Balanced;
+    const QList<RenderSeg> plan =
+        buildRenderPlan(m_timeline->segments(), m_timeline->fades(), *m_lib);
+    m_exportProgress = 0;
+    m_exportStatus = QStringLiteral("Preparing…");
+    emit exportChanged();
+    m_exporter->start(plan, m_song, out, opt);
+}
+
+void Studio::cancelExport() { m_exporter->cancel(); }
 
 void Studio::playPause() {
     if (!m_timeline->hasTimeline()) generate();

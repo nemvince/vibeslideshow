@@ -14,7 +14,7 @@ ApplicationWindow {
     minimumWidth: 960
     minimumHeight: 620
     visible: true
-    title: "vibeslideshow"
+    title: studio.documentPath.length ? studio.documentName + " — vibeslideshow" : "vibeslideshow"
     color: palette.window
 
     // Set while a native picker is open on top of one of the popups, so that popup
@@ -116,6 +116,10 @@ ApplicationWindow {
                 Layout.rightMargin: 4
             }
 
+            SmallButton {
+                text: "File…"
+                onClicked: fileMenu.open()
+            }
             SmallButton {
                 text: "Song…"
                 onClicked: studio.openSongDialog()
@@ -229,6 +233,21 @@ ApplicationWindow {
 
                 Rectangle { Layout.preferredWidth: 1; implicitHeight: 18; color: Theme.line; Layout.leftMargin: 2; Layout.rightMargin: 2 }
 
+                // History sits left of the edit actions: it is about the edit as a
+                // whole, not about the selected shot.
+                IconButton {
+                    glyph: "\u21B6"
+                    tip: "Undo (Ctrl+Z)"
+                    enabled: studio.workspaceEnabled && timeline.canUndo
+                    onClicked: timeline.undo()
+                }
+                IconButton {
+                    glyph: "\u21B7"
+                    tip: "Redo (Ctrl+Shift+Z)"
+                    enabled: studio.workspaceEnabled && timeline.canRedo
+                    onClicked: timeline.redo()
+                }
+
                 // Edit actions come from the command table, so the menu, these
                 // buttons and the keys cannot disagree about what exists. They all
                 // need a settled library: a rescan renumbers clip ids under the edit.
@@ -307,6 +326,14 @@ ApplicationWindow {
                     accent: enabled
                     enabled: !studio.busy && studio.songAnalysed
                     onClicked: studio.generate()
+                }
+                // Rendering to a file needs an edit and a song: there is nothing to
+                // encode without both.
+                SmallButton {
+                    text: "Export…"
+                    flat: true
+                    enabled: timeline.count > 0 && studio.songPath.length > 0 && !studio.exporting
+                    onClicked: exportDialog.open()
                 }
                 // Stop stays usable even mid-pass: a scan can start while a show
                 // is already playing, and the music must always be stoppable.
@@ -523,6 +550,228 @@ ApplicationWindow {
         }
     }
 
+    // Projects. A popup rather than a strip of its own: three commands do not
+    // deserve permanent space, and the top bar stays two buttons wide.
+    Popup {
+        id: fileMenu
+        objectName: "fileMenu"
+        parent: topBar
+        x: Math.max(Theme.pad, topBar.width - width - Theme.pad)
+        y: topBar.height + 4
+        // The rows size themselves to the popup, so the popup has to have a width:
+        // a content item cannot measure itself from children that follow it.
+        width: 190
+        padding: 6
+        modal: false
+        focus: true
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+
+        enter: Transition { NumberAnimation { property: "opacity"; from: 0; to: 1; duration: Theme.durFast } }
+        exit: Transition { NumberAnimation { property: "opacity"; from: 1; to: 0; duration: 90 } }
+
+        background: Rectangle {
+            color: Theme.panelHi
+            radius: 10
+            border.color: Theme.line
+        }
+
+        contentItem: Column {
+            id: fileCol
+            spacing: 2
+            SmallButton {
+                width: fileCol.width
+                text: "New project"
+                onClicked: {
+                    fileMenu.close()
+                    studio.newDocument()
+                }
+            }
+            SmallButton {
+                width: fileCol.width
+                text: "Open…"
+                onClicked: {
+                    fileMenu.close()
+                    studio.openDocumentDialog()
+                }
+            }
+            SmallButton {
+                width: fileCol.width
+                text: "Save a copy…"
+                onClicked: {
+                    fileMenu.close()
+                    studio.saveAsDialog()
+                }
+            }
+        }
+    }
+
+    // The pickers hand Studio a QUrl, not a string: only toLocalFile() decodes
+    // the percent-escapes, and every folder in a project's path may have spaces.
+    FileDialog {
+        id: documentOpenDialog
+        objectName: "documentOpenDialog"
+        title: "Open a project"
+        fileMode: FileDialog.OpenFile
+        nameFilters: ["vibeslideshow project (*.vibes)", "All files (*)"]
+        onAccepted: studio.openDocument(selectedFile)
+        onRejected: root.reopenWhichever()
+    }
+
+    FileDialog {
+        id: documentSaveDialog
+        objectName: "documentSaveDialog"
+        title: "Save a copy"
+        fileMode: FileDialog.SaveFile
+        defaultSuffix: "vibes"
+        nameFilters: ["vibeslideshow project (*.vibes)"]
+        onAccepted: studio.saveDocumentTo(selectedFile)
+        onRejected: root.reopenWhichever()
+    }
+
+    // Rendering to a file. Same shape as the project popup: a path, the quality,
+    // the progress of the run, and the two things the user can do about it.
+    Popup {
+        id: exportDialog
+        objectName: "exportDialog"
+        modal: true
+        focus: true
+        anchors.centerIn: Overlay.overlay
+        width: 540
+        padding: 18
+        closePolicy: Popup.CloseOnEscape
+        // 0 draft, 1 balanced, 2 high.
+        property int quality: 1
+
+        enter: Transition { NumberAnimation { property: "opacity"; from: 0; to: 1; duration: Theme.dur } }
+        exit: Transition { NumberAnimation { property: "opacity"; from: 1; to: 0; duration: 120 } }
+
+        background: Rectangle {
+            color: Theme.panel
+            radius: Theme.radius
+            border.color: Theme.line
+        }
+
+        contentItem: Column {
+            id: expCol
+            spacing: 12
+
+            Text {
+                text: "Export the film"
+                color: Theme.ink
+                font.pixelSize: 14
+                font.weight: Font.DemiBold
+            }
+
+            Row {
+                width: expCol.width
+                spacing: 8
+
+                Rectangle {
+                    width: parent.width - exportChoose.width - parent.spacing
+                    height: 26
+                    radius: 6
+                    color: Theme.bg
+                    border.color: Theme.line
+
+                    TextField {
+                        id: exportPathField
+                        objectName: "exportPath"
+                        anchors.fill: parent
+                        anchors.leftMargin: 8
+                        anchors.rightMargin: 8
+                        topPadding: 0
+                        bottomPadding: 0
+                        readOnly: true
+                        placeholderText: "Choose where to save it…"
+                        color: Theme.ink
+                        placeholderTextColor: Theme.faint
+                        font.pixelSize: 11
+                        verticalAlignment: TextInput.AlignVCenter
+                        background: null
+                    }
+                }
+                SmallButton {
+                    id: exportChoose
+                    text: "Choose…"
+                    onClicked: exportFileDialog.open()
+                }
+            }
+
+            Segmented {
+                objectName: "exportQuality"
+                width: expCol.width
+                options: [
+                    { label: "Draft", value: 0 },
+                    { label: "Balanced", value: 1 },
+                    { label: "High", value: 2 }
+                ]
+                value: exportDialog.quality
+                onSelected: (v) => exportDialog.quality = v
+            }
+
+            ProgressLine {
+                width: expCol.width
+                visible: studio.exporting
+                active: studio.exporting
+                value: studio.exportProgress
+            }
+
+            Text {
+                width: expCol.width
+                text: studio.exportStatus
+                visible: text.length > 0
+                color: Theme.dim
+                font.pixelSize: 11
+                wrapMode: Text.WordWrap
+            }
+
+            Item {
+                width: expCol.width
+                height: 30
+
+                Row {
+                    anchors.right: parent.right
+                    anchors.verticalCenter: parent.verticalCenter
+                    spacing: 8
+
+                    SmallButton {
+                        objectName: "exportCancel"
+                        text: "Cancel export"
+                        visible: studio.exporting
+                        onClicked: studio.cancelExport()
+                    }
+                    SmallButton {
+                        objectName: "exportGo"
+                        text: "Export"
+                        accent: enabled
+                        enabled: exportPathField.text.length > 0 && !studio.exporting
+                        onClicked: studio.exportVideo(exportPathField.text, exportDialog.quality)
+                    }
+                    SmallButton {
+                        objectName: "exportClose"
+                        text: "Close"
+                        flat: true
+                        onClicked: exportDialog.close()
+                    }
+                }
+            }
+        }
+    }
+
+    FileDialog {
+        id: exportFileDialog
+        objectName: "exportFileDialog"
+        title: "Export the film"
+        fileMode: FileDialog.SaveFile
+        defaultSuffix: "mp4"
+        nameFilters: ["Video (*.mp4)"]
+        onAccepted: {
+            exportPathField.text = selectedFile
+            exportDialog.open()
+        }
+        onRejected: exportDialog.open()
+    }
+
     // Asked at every launch: the two things the app needs, in one place. A
     // remembered song and folder are already filled in, so continuing is one
     // click; "Not now" leaves the restored session exactly as it was.
@@ -553,6 +802,9 @@ ApplicationWindow {
         function onSongDialogRequested() { songDialog.open() }
         function onFolderDialogRequested() { projectDialog.open() }
         function onFilesDialogRequested() { footageFilesDialog.open() }
+        function onDocumentOpenRequested() { documentOpenDialog.open() }
+        function onDocumentSaveRequested() { documentSaveDialog.open() }
+        function onExportDialogRequested() { exportDialog.open() }
     }
 
     // ---- keybindings -----------------------------------------------------
@@ -620,4 +872,11 @@ ApplicationWindow {
     Shortcut { sequence: timeline.commandKey("swap");      enabled: !root.typingText; onActivated: timeline.runCommand("swap") }
     Shortcut { sequence: timeline.commandKey("remove");    enabled: !root.typingText; onActivated: timeline.runCommand("remove") }
     Shortcut { sequence: timeline.commandKey("rerollAll"); enabled: !root.typingText; onActivated: timeline.runCommand("rerollAll") }
+    Shortcut { sequence: timeline.commandKey("cutHard");   enabled: !root.typingText; onActivated: timeline.runCommand("cutHard") }
+    Shortcut { sequence: timeline.commandKey("cutSofter"); enabled: !root.typingText; onActivated: timeline.runCommand("cutSofter") }
+    Shortcut { sequence: timeline.commandKey("cutHarder"); enabled: !root.typingText; onActivated: timeline.runCommand("cutHarder") }
+    // History. Plain Ctrl+Z and Ctrl+Shift+Z, standard everywhere; the edit's own
+    // undo stack is what they drive.
+    Shortcut { sequence: "Ctrl+Z";       enabled: !root.typingText && timeline.canUndo; onActivated: timeline.undo() }
+    Shortcut { sequence: "Ctrl+Shift+Z"; enabled: !root.typingText && timeline.canRedo; onActivated: timeline.redo() }
 }

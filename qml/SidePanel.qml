@@ -566,7 +566,7 @@ Rectangle {
 
                 SwitchRow {
                     label: "Play low-res proxies"
-                    hint: "DJI cameras write a light .LRF twin next to each clip; it previews faster, a little softer."
+                    hint: "DJI writes a light .LRF twin next to each clip and GoPro a .LRV; they preview faster, a little softer."
                     checked: studio.params.useLrf === true
                     onToggled: (on) => studio.setParam("useLrf", on)
                 }

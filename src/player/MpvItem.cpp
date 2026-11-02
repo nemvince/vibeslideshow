@@ -205,6 +205,7 @@ void MpvItem::clear() {
     m_pendingLoad = false;
     m_pendingSeek = -1;
     m_frameTime = 0;
+    setView(0, 0, 0);
     if (!m_mpv) return;
     mpv_command_string(m_mpv, "stop");
 }
@@ -220,6 +221,17 @@ void MpvItem::setPaused(bool p) {
     if (!m_mpv) return;
     int f = p ? 1 : 0;
     mpv_set_property(m_mpv, "pause", MPV_FORMAT_FLAG, &f);
+}
+
+void MpvItem::setView(double zoomLog2, double panX, double panY) {
+    m_viewZoom = zoomLog2;
+    if (!m_mpv) return;
+    // Three separate properties, set unconditionally: mpv ignores no-ops cheaply,
+    // and skipping the write when the value looks unchanged would keep a stale pan
+    // after a shot change.
+    mpv_set_property(m_mpv, "video-zoom", MPV_FORMAT_DOUBLE, &zoomLog2);
+    mpv_set_property(m_mpv, "video-pan-x", MPV_FORMAT_DOUBLE, &panX);
+    mpv_set_property(m_mpv, "video-pan-y", MPV_FORMAT_DOUBLE, &panY);
 }
 
 QQuickFramebufferObject::Renderer *MpvItem::createRenderer() const {

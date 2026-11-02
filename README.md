@@ -2,7 +2,7 @@
 
 A native desktop editor that cuts your own footage to a song. Point it at a
 folder of clips, pick a track, pick a look in plain language — and it cuts a
-beat-synced slideshow you can fix by hand, shot by shot.
+beat-synced slideshow you can fix by hand, shot by shot, then render to an MP4.
 
 Qt 6 Quick + libmpv. Linux, macOS and Windows; developed on Linux.
 
@@ -67,13 +67,13 @@ the code looks next to the binary first (and honours `VIBESLIDESHOW_TOOLS_DIR`).
    whole folder. Use **Import…** at the top of the bin (or **Project…** in the top
    bar), or drag files and folders from the file manager straight onto the bin.
    Folders are walked recursively; every video in them (`mp4`, `webm`, `mov`,
-   `mkv`, `m4v`) is indexed and scored, DJI `.LRF` proxies are paired
-   automatically for fast cuts and never indexed as clips, and a clip copied into
-   several date folders is only indexed once. Network shares mounted in your file
-   manager (SMB/SFTP/NFS) work as long as you pick the mounted folder. The edit
-   is generated as soon as the scan finds clips, and re-cut once the scores are
-   in — and re-cut again if the footage list changes, since a rescan renumbers the
-   clips the edit names.
+   `mkv`, `m4v`) is indexed and scored, camera proxies (DJI `.LRF`, GoPro
+   `.LRV`) are paired automatically for fast cuts and never indexed as clips, and
+   a clip copied into several date folders is only indexed once. Network shares
+   mounted in your file manager (SMB/SFTP/NFS) work as long as you pick the
+   mounted folder. The edit is generated as soon as the scan finds clips, and
+   re-cut once the scores are in — and re-cut again if the footage list changes,
+   since a rescan renumbers the clips the edit names.
 3. **Song…** loads a track. The app finds its tempo, energy curve, sections
    (chill / build / loud / drop) and any stutter it already has, then cuts the
    first edit for you.
@@ -134,6 +134,47 @@ the code looks next to the binary first (and honours `VIBESLIDESHOW_TOOLS_DIR`).
    instead of waiting for the next scroll. Only when an edit does not change that
    picture — shortening some other shot, say — is the surface left untouched.
 
+   Every edit is undoable. The two arrows left of the edit actions, `Ctrl+Z` and
+   `Ctrl+Shift+Z` step back and forward through up to a hundred steps of
+   shorten / lengthen / chop / swap / re-roll / remove / drop / cut change.
+   Generating a new edit starts the history over; importing or removing footage
+   is outside it, because a rescan renumbers the clips the edit names.
+
+   Each shot also gets a slow move — the camera pushing in or pulling out, a
+   couple of percent to about a thirteenth, chosen by whether the music is loud,
+   building or chillin — alternating direction shot to shot so two neighbours
+   never drift the same way. The preview plays that move live, and the render
+   bakes it in. How two shots join is per cut: `H` makes the cut into the
+   selected shot hard, `[` softens it and `]` sharpens it again, in 40 ms steps
+   up to half a second. The cut before the first shot does not exist, so those
+   three do nothing there.
+7. **File…** in the top bar holds the project: **New project** (keeps the
+   footage and the song, clears the edit), **Open…** and **Save a copy…**
+   (`*.vibes`). A project remembers the footage, the song, the look, the filters
+   and the edit shot by shot — in-points, lengths, cuts and moves — so a reopened
+   project comes back cut exactly as it was saved, and the window title shows its
+   name. Shots whose clip is no longer on disk are dropped on open and the status
+   says how many. The last project is reopened on the next launch.
+8. **Export…** renders the edit to an MP4 with ffmpeg: one encode per shot into a
+   temporary directory, then a single pass that either joins the shots or
+   dissolves them and muxes the song. Draft / Balanced / High change the encoder
+   settings, not the cut. The dialog shows the progress of each phase and can
+   stop the run; a cancelled export leaves no file behind. The output is
+   1920×1080 at 30 fps, letterboxed rather than cropped, and its length is the
+   edit's own length.
+
+The same render runs without a window, which is what a batch job or a build
+machine uses:
+
+```sh
+vibeslideshow --render project.vibes --out film.mp4 \
+              [--quality draft|balanced|high] [--size 1920x1080]
+```
+
+It prints the progress on stderr, the finished file on stdout, and exits 0 on
+success, 1 when the render fails (or the project has no edit) and 2 for bad
+arguments.
+
 While any pass runs, the top bar's message slot carries what it is doing and how
 far it has got (counts, ETA, percentage), with the progress line on the top bar's
 own bottom edge — it sweeps while no total is known, and takes no room when the
@@ -154,7 +195,9 @@ Space plays and pauses, arrow keys nudge ±5 s, `Ctrl+G` regenerates the edit,
 `Esc` stops. On the edit: `-` and `+` shorten and lengthen the selected shot,
 `C` chops it in two, `I` takes another moment from the same clip, `S` swaps in a
 different clip, `Delete` removes it, and `Shift+R` re-rolls every in-point. The
-keys stand down while a text field has focus, and while the workspace is locked.
+cut into the selected shot: `H` hard, `[` softer, `]` sharper. `Ctrl+Z` undoes,
+`Ctrl+Shift+Z` redoes. The keys stand down while a text field has focus, and
+while the workspace is locked.
 
 ## How it works
 
@@ -164,7 +207,10 @@ src/
                    (key/mode, energy, danceability, brightness, loudness)
   core/Scheduler   buildCuts() + materialise() + seeded RNG
   core/Params      the generation parameters, presets, filter + skip-window config
-  core/Library     scan, ffprobe, LRF pairing, scoring, cache
+  core/Library     scan, ffprobe, proxy pairing (.LRF/.LRV), scoring, cache
+  core/Document    the .vibes project file: read and write
+  core/RenderPlan  the edit as render segments (paths, in-points, moves)
+  core/Exporter    ffmpeg: one encode per shot, then join or dissolve + mux
   player/MpvItem   one video surface: QQuickFramebufferObject + mpv_render_gl
   player/Show      the edit engine: audio-master clock, preload, crossfade
   ui/ClipModel     list model over the library, filter state, thumbnails
@@ -224,8 +270,11 @@ earlier call, and mpv refuses to run under a comma-decimal locale.
 
 ## Files on disk
 
-- `~/.config/vibeslideshow/params.json` — folders, song, look, filters
+- `~/.config/vibeslideshow/params.json` — folders, song, look, filters, and the
+  project last opened
 - `~/.config/vibeslideshow/profiles.json` — saved looks
+- `<somewhere>.vibes` — a project, wherever you save it: footage, song, look,
+  filters and the edit
 - `<footage folder>/.vibeslideshow-score-cache.json` — everything the scan learnt
   about each clip: duration and dimensions from the probe, plus its score and
   motion, keyed by byte size + mtime. A rescan of an unchanged folder opens no

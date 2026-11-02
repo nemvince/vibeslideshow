@@ -32,6 +32,13 @@ const QStringList &videoExts() {
     return e;
 }
 
+// Low-res twins a camera writes next to the original: DJI .LRF, GoPro .LRV.
+// They are never indexed as clips; they are paired with the file of the same stem.
+const QStringList &proxyExts() {
+    static const QStringList e = {QStringLiteral("lrf"), QStringLiteral("lrv")};
+    return e;
+}
+
 QString extOf(const QString &p) {
     const int dot = p.lastIndexOf(QLatin1Char('.'));
     return dot < 0 ? QString() : p.mid(dot + 1).toLower();
@@ -299,8 +306,8 @@ bool probeClip(const QString &path, qint64 size, const QHash<QString, QString> &
 // list, touches no members, so it is safe to run on a worker thread.
 //
 // Two things this has to get right on a real footage drive:
-//  - `.LRF` files are DJI proxies, not clips: they are paired by stem with their
-//    `.MP4` twin and never indexed on their own.
+//  - Proxy twins (DJI `.LRF`, GoPro `.LRV`) are not clips: they are paired by stem
+//    with their `.MP4` twin and never indexed on their own.
 //  - The same clip is often copied into several date folders. A duplicate is the
 //    same file name at the same byte size; it is dropped before probing, so the
 //    edit cannot show the same shot twice by accident.
@@ -315,18 +322,19 @@ Library::ScanOutcome scanSources(const QList<MediaSource> &sources, const QSet<Q
             while (it.hasNext()) {
                 const QString path = it.next();
                 const QString e = extOf(path);
-                if (e == QLatin1String("lrf")) lrfFor.insert(stemOf(path), path);
+                if (proxyExts().contains(e)) lrfFor.insert(stemOf(path), path);
                 else if (videoExts().contains(e) && !hidden.contains(path)) candidates.append(path);
             }
         } else {
             if (hidden.contains(s.path)) continue;
             if (!videoExts().contains(extOf(s.path))) continue;
             candidates.append(s.path);
-            // A loose file gets the same .LRF pairing its folder walk would have given it.
+            // A loose file gets the same proxy pairing its folder walk would have given it.
             const QDir parent = QFileInfo(s.path).absoluteDir();
             const QString stem = stemOf(s.path);
-            for (const QString &sibling : parent.entryList({QStringLiteral("*.[lL][rR][fF]")}, QDir::Files))
-                if (stemOf(sibling) == stemOf(QFileInfo(s.path).fileName()))
+            const QString ownStem = stemOf(QFileInfo(s.path).fileName());
+            for (const QString &sibling : parent.entryList(QDir::Files))
+                if (proxyExts().contains(extOf(sibling)) && stemOf(sibling) == ownStem)
                     lrfFor.insert(stem, parent.absoluteFilePath(sibling));
         }
     }

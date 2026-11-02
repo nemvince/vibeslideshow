@@ -66,6 +66,10 @@ public:
     void seekExact(double t);
     void setPaused(bool p);
     bool paused() const { return m_paused; }
+    // Ken Burns at playback: mpv's own video-zoom / video-pan-x / video-pan-y.
+    // zoom is log2 (mpv's unit), so 1.1× is 0.1375.
+    void setView(double zoomLog2, double panX, double panY);
+    double viewZoom() const { return m_viewZoom; }   // read back for tests
     // Current frame time in seconds (mpv's own clock for this surface).
     double frameTime() const { return m_frameTime; }
     // Seconds of media buffered ahead of the current position (mpv's demuxer
@@ -125,6 +129,7 @@ private:
     double m_buffered = -1;
     bool m_haveBufferInfo = false;
     bool m_paused = true;
+    double m_viewZoom = 0;
 };
 
 class MpvRenderer : public QQuickFramebufferObject::Renderer, protected QOpenGLFunctions {

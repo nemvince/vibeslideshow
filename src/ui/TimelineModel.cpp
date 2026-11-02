@@ -41,6 +41,10 @@ const QList<TlCommand> &clipCommands() {
         {"swap",      "Swap in a different clip",     "\u21C4", "S",       "clip",        true, "selection"},
         {"remove",    "Remove this shot",             "\u2715", "Delete",  "destructive", true, "selection"},
         {"rerollAll", "New in-point for every shot",  "\u27F3", "Shift+R", "all",         true, "timeline"},
+        // The join before this shot. Index 0 has no join, so these do nothing there.
+        {"cutHard",   "Hard cut into this shot",      "\u2502", "H",       "timing",      false, "selection"},
+        {"cutSofter", "Soften this cut",              "\u25CB", "[",       "timing",      false, "selection"},
+        {"cutHarder", "Sharpen this cut",             "\u25CF", "]",       "timing",      false, "selection"},
     };
     return t;
 }
@@ -158,6 +162,8 @@ void TimelineModel::regenerate(const QList<int> &poolIds) {
     if (!m_sched || m_songDur <= 0) return;
     Cuts cc;
     QList<TlSeg> segs = m_sched->materialize(m_songDur, m_sched->pool(), &cc);
+    // A new cut is a new edit, not a step inside the old one.
+    clearHistory();
     beginResetModel();
     m_segs = segs;
     // Fades run parallel to the cuts; an edited segment keeps the fade its cut had.
@@ -181,24 +187,84 @@ void TimelineModel::touch() {
     emit changed();
 }
 
+void TimelineModel::pushUndo() {
+    m_undo.append({m_segs, m_fades, m_poolIds, m_sel, m_edits});
+    if (m_undo.size() > kHistoryDepth) m_undo.removeFirst();
+    // A new change abandons whatever had been undone: there is no branching edit.
+    m_redo.clear();
+    emit historyChanged();
+}
+
+void TimelineModel::clearHistory() {
+    if (m_undo.isEmpty() && m_redo.isEmpty()) return;
+    m_undo.clear();
+    m_redo.clear();
+    emit historyChanged();
+}
+
+void TimelineModel::restore(const Snapshot &snap) {
+    beginResetModel();
+    m_segs = snap.segs;
+    m_fades = snap.fades;
+    m_poolIds = snap.poolIds;
+    m_sel = snap.sel;
+    m_edits = snap.edits;
+    endResetModel();
+    emit countChanged();
+    emit selectedChanged();
+    emit editsChanged();
+    emit statsChanged();
+    emit changed();
+    emit historyChanged();
+}
+
+void TimelineModel::undo() {
+    if (m_undo.isEmpty()) return;
+    m_redo.append({m_segs, m_fades, m_poolIds, m_sel, m_edits});
+    if (m_redo.size() > kHistoryDepth) m_redo.removeFirst();
+    const Snapshot snap = m_undo.takeLast();
+    restore(snap);
+}
+
+void TimelineModel::redo() {
+    if (m_redo.isEmpty()) return;
+    m_undo.append({m_segs, m_fades, m_poolIds, m_sel, m_edits});
+    if (m_undo.size() > kHistoryDepth) m_undo.removeFirst();
+    const Snapshot snap = m_redo.takeLast();
+    restore(snap);
+}
+
+void TimelineModel::adoptEdit(const QList<TlSeg> &segs, const QList<double> &fades) {
+    clearHistory();
+    beginResetModel();
+    m_segs = segs;
+    m_fades = fades;
+    while (m_fades.size() < m_segs.size()) m_fades.append(0);
+    m_fades.resize(m_segs.size());
+    m_sel = -1;
+    m_edits = 0;
+    endResetModel();
+    emit countChanged();
+    emit selectedChanged();
+    emit editsChanged();
+    emit statsChanged();
+    emit changed();
+}
+
 void TimelineModel::shorten() {
     const int k = m_sel;
     if (k < 0 || k >= m_segs.size()) return;
+    const bool last = k == m_segs.size() - 1;
+    if (last && m_segs.size() < 2) return;
     // Segment lengths always sum to the song: time removed from one segment is
     // handed to the one at the end, and the last segment hands it back to its
     // neighbour instead of shrinking the edit off the end of the song.
-    if (k == m_segs.size() - 1) {
-        if (m_segs.size() < 2) return;
-        const double d = std::min(TlStep, m_segs[k].len - TlMin);
-        if (d <= 0) return;
-        m_segs[k].len -= d;
-        m_segs[k - 1].len += d;
-    } else {
-        const double d = std::min(TlStep, m_segs[k].len - TlMin);
-        if (d <= 0) return;
-        m_segs[k].len -= d;
-        m_segs.last().len += d;
-    }
+    const double d = std::min(TlStep, m_segs[k].len - TlMin);
+    if (d <= 0) return;
+    pushUndo();
+    m_segs[k].len -= d;
+    if (last) m_segs[k - 1].len += d;
+    else m_segs.last().len += d;
     emit dataChanged(index(std::max(0, k - 1), 0), index(m_segs.size() - 1, 0),
                      {SegLenRole, SegStartRole});
     touch();
@@ -207,18 +273,16 @@ void TimelineModel::shorten() {
 void TimelineModel::lengthen() {
     const int k = m_sel;
     if (k < 0 || k >= m_segs.size()) return;
-    if (k == m_segs.size() - 1) {
-        if (m_segs.size() < 2) return;
-        const double d = std::min(TlStep, m_segs[k - 1].len - TlMin);
-        if (d <= 0) return;
-        m_segs[k].len += d;
-        m_segs[k - 1].len -= d;
-    } else {
-        const double d = std::min(TlStep, m_segs.last().len - TlMin);
-        if (d <= 0) return;
-        m_segs[k].len += d;
-        m_segs.last().len -= d;
-    }
+    const bool last = k == m_segs.size() - 1;
+    if (last && m_segs.size() < 2) return;
+    // The time a shot grows by comes out of the shot that follows it — or, for the
+    // last shot, out of the one before it.
+    double &donor = last ? m_segs[k - 1].len : m_segs.last().len;
+    const double d = std::min(TlStep, donor - TlMin);
+    if (d <= 0) return;
+    pushUndo();
+    m_segs[k].len += d;
+    donor -= d;
     emit dataChanged(index(std::max(0, k - 1), 0), index(m_segs.size() - 1, 0),
                      {SegLenRole, SegStartRole});
     touch();
@@ -241,7 +305,9 @@ void TimelineModel::chop() {
     add.id = v->id;
     add.len = m_segs[k].len - half;
     add.s = m_sched->dur2seek(*v, add.len, m_sched->rnd());
+    add.move = m_segs[k].move;   // both halves carry the shot's move
 
+    pushUndo();
     beginInsertRows(QModelIndex(), k + 1, k + 1);
     m_segs.insert(k + 1, add);
     m_fades.insert(k + 1, 0);   // a chop is always a hard cut
@@ -258,6 +324,7 @@ void TimelineModel::rerollIn() {
     if (k < 0 || k >= m_segs.size() || !m_lib) return;
     const Clip *c = m_lib->clipById(m_segs[k].id);
     if (!c) return;
+    pushUndo();
     m_segs[k].s = m_sched->dur2seek(*c, m_segs[k].len, m_sched->rnd());
     const QModelIndex ix = index(k, 0);
     emit dataChanged(ix, ix, {SegInRole});
@@ -271,6 +338,7 @@ void TimelineModel::swap() {
     const int nextId = k + 1 < m_segs.size() ? m_segs[k + 1].id : -1;
     const Clip *v = m_sched->pickNeighbour(m_sched->pool(), m_segs[k].id, prevId, nextId);
     if (!v) return;
+    pushUndo();
     m_segs[k].id = v->id;
     m_segs[k].s = m_sched->dur2seek(*v, m_segs[k].len, m_sched->rnd());
     const QModelIndex ix = index(k, 0);
@@ -281,6 +349,7 @@ void TimelineModel::swap() {
 void TimelineModel::remove() {
     const int k = m_sel;
     if (k < 0 || m_segs.size() <= 2) return;
+    pushUndo();
     const double ln = m_segs[k].len;
     beginRemoveRows(QModelIndex(), k, k);
     m_segs.removeAt(k);
@@ -308,6 +377,7 @@ void TimelineModel::dropClips(const QList<int> &clipIds) {
         fades.append(i < m_fades.size() ? m_fades[i] : 0);
     }
     if (keep.size() == m_segs.size()) return;
+    pushUndo();
     beginResetModel();
     m_segs = keep;
     m_fades = fades;
@@ -344,6 +414,7 @@ double TimelineModel::cutTime(int row) const {
 
 void TimelineModel::replaceSegment(int row, int clipId, double inPoint) {
     if (row < 0 || row >= m_segs.size()) return;
+    pushUndo();
     m_segs[row].id = clipId;
     m_segs[row].s = inPoint;
     const QModelIndex ix = index(row, 0);
@@ -352,13 +423,13 @@ void TimelineModel::replaceSegment(int row, int clipId, double inPoint) {
 }
 
 void TimelineModel::rerollAll() {
-    if (!m_sched || !m_lib) return;
+    if (!m_sched || !m_lib || m_segs.isEmpty()) return;
+    pushUndo();
     for (TlSeg &s : m_segs) {
         const Clip *c = m_lib->clipById(s.id);
         if (c) s.s = m_sched->dur2seek(*c, s.len, m_sched->rnd());
     }
-    if (!m_segs.isEmpty())
-        emit dataChanged(index(0, 0), index(m_segs.size() - 1, 0), {SegInRole});
+    emit dataChanged(index(0, 0), index(m_segs.size() - 1, 0), {SegInRole});
     touch();
 }
 
@@ -398,6 +469,22 @@ void TimelineModel::runCommand(const QString &id) {
     else if (id == QLatin1String("swap")) swap();
     else if (id == QLatin1String("remove")) remove();
     else if (id == QLatin1String("rerollAll")) rerollAll();
+    else if (id == QLatin1String("cutHard") || id == QLatin1String("cutSofter")
+             || id == QLatin1String("cutHarder")) {
+        // The fade into the selected shot. Row 0 starts the edit: there is no join
+        // there to soften, so it is left alone.
+        const int k = m_sel;
+        if (k <= 0 || k >= m_segs.size()) return;
+        const double cur = m_fades.value(k, 0);
+        const double next = (id == QLatin1String("cutHard")) ? 0.0
+                          : (id == QLatin1String("cutSofter")) ? std::min(500.0, cur + 40)
+                                                               : std::max(0.0, cur - 40);
+        if (next == cur) return;
+        pushUndo();
+        m_fades[k] = next;
+        emit dataChanged(index(k, 0), index(k, 0));
+        touch();
+    }
     // Unknown id: nothing. Keys are always live (see Studio.qml), and every
     // operation above already no-ops when nothing is selected.
 }

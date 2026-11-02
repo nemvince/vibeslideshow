@@ -412,6 +412,20 @@ QList<TlSeg> Scheduler::materialize(double songDuration, const QList<Clip> &base
         return 0.5;
     };
 
+    // Alternating push-in / pull-out so two neighbouring shots never move the same
+    // way; how far comes from the same section table the holds use.
+    auto moveFor = [&wantedMotion](int i, double t) {
+        const double want = wantedMotion(t);
+        const double amp = 0.04 + 0.09 * want;          // 4 % .. 13 %
+        TlMove m;
+        if (i % 2 == 0) { m.z0 = 1.0;        m.z1 = 1.0 + amp; }
+        else            { m.z0 = 1.0 + amp;  m.z1 = 1.0; }
+        const double drift = ((i / 2) % 2 == 0) ? -0.06 : 0.06;
+        m.cx0 = 0.5 - drift; m.cx1 = 0.5 + drift;
+        m.cy0 = m.cy1 = 0.5;
+        return m;
+    };
+
     // The walk stays chronological, but not blindly so: for each segment we look a
     // few clips ahead and take the one whose movement matches the section, then
     // keep walking from there. The chosen clip is swapped to the front of the
@@ -430,7 +444,10 @@ QList<TlSeg> Scheduler::materialize(double songDuration, const QList<Clip> &base
                 segs[i].s = dur2seek(p, segs[i].len, rnd());
                 break;
             }
-            if (segs[i].id >= 0) continue;
+            if (segs[i].id >= 0) {
+                segs[i].move = moveFor(i, cc.times.value(i, 0));
+                continue;
+            }
         }
 
         // Candidates: the next few clips, minus the near-black ones. A clip that
@@ -456,6 +473,7 @@ QList<TlSeg> Scheduler::materialize(double songDuration, const QList<Clip> &base
         const Clip &c = base[pos];
         segs[i].id = c.id;
         segs[i].s = dur2seek(c, segs[i].len, rnd());
+        segs[i].move = moveFor(i, cc.times.value(i, 0));
         if (used.size() < base.size()) used.append(QString::number(c.id));
         pos++;
         if (pos >= base.size()) { pos = 0; used.clear(); }

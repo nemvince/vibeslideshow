@@ -100,6 +100,9 @@ private:
     // Replace the picture the visible surface holds with the shot the playhead
     // is over now (after the edit under it changed).
     void refreshPreview();
+    // Ken Burns at playback: put the frame's current zoom and centre (the shot's
+    // move interpolated over its length) onto the surface on screen.
+    void applyView(double songTime);
     // Keep every spare surface loaded with one of the shots coming up next.
     void fillLookahead();
     void releaseSurfaces();

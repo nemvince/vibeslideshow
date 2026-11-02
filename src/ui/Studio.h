@@ -9,12 +9,14 @@
 #include <memory>
 #include "core/Params.h"
 #include "core/Types.h"
+#include "core/Document.h"
 
 class Library;
 class Scheduler;
 class ClipModel;
 class TimelineModel;
 class Show;
+class Exporter;
 
 // The one object the QML studio talks to. It owns the document (sources, song,
 // params, filters, profiles), mediates the worker passes, and exposes
@@ -65,6 +67,13 @@ class Studio : public QObject {
     Q_PROPERTY(int libraryCount READ libraryCount NOTIFY libraryChanged)
     Q_PROPERTY(QString lookSummary READ lookSummary NOTIFY paramsChanged)
     Q_PROPERTY(bool hasEdit READ hasEdit NOTIFY editChanged)
+    // The .vibes project open in the window. Empty until it has been saved once.
+    Q_PROPERTY(QString documentPath READ documentPath NOTIFY documentChanged)
+    Q_PROPERTY(QString documentName READ documentName NOTIFY documentChanged)
+    // Rendering to a file. Progress is 0..1 over the whole render.
+    Q_PROPERTY(bool exporting READ exporting NOTIFY exportChanged)
+    Q_PROPERTY(double exportProgress READ exportProgress NOTIFY exportChanged)
+    Q_PROPERTY(QString exportStatus READ exportStatus NOTIFY exportChanged)
     Q_PROPERTY(double volume READ volume WRITE setVolume NOTIFY volumeChanged)
 public:
     explicit Studio(QObject *parent = nullptr);
@@ -104,6 +113,11 @@ public:
     QString lookSummary() const;
     bool hasEdit() const;
     double volume() const;
+    QString documentPath() const { return m_docPath; }
+    QString documentName() const;
+    bool exporting() const;
+    double exportProgress() const { return m_exportProgress; }
+    QString exportStatus() const { return m_exportStatus; }
     int previewHeight() const { return m_previewHeight; }
 
     Library *library() const { return m_lib; }
@@ -141,6 +155,18 @@ public:
     Q_INVOKABLE void openFolderDialog();
     Q_INVOKABLE void openFilesDialog();
     Q_INVOKABLE void openSongDialog();
+    // Projects. A new project keeps the footage and the song — those are the
+    // user's material, not the document — and resets the edit and the path.
+    Q_INVOKABLE void newDocument();
+    Q_INVOKABLE void openDocumentDialog();
+    Q_INVOKABLE void saveAsDialog();
+    Q_INVOKABLE bool openDocument(const QUrl &url);
+    Q_INVOKABLE bool saveDocumentTo(const QUrl &url);
+    // 0 draft, 1 balanced, 2 high. The dialog picks the file; this does the work.
+    Q_INVOKABLE void exportVideo(const QUrl &file, int quality);
+    Q_INVOKABLE void cancelExport();
+    // Named apart from the signal it raises, which a same-named method would hide.
+    Q_INVOKABLE void openExportDialog();
 
 
 signals:
@@ -162,6 +188,11 @@ signals:
     void folderDialogRequested();
     void filesDialogRequested();
     void songDialogRequested();
+    void documentChanged();
+    void documentOpenRequested();
+    void documentSaveRequested();
+    void exportChanged();
+    void exportDialogRequested();
 
 
 private:
@@ -180,6 +211,9 @@ private:
     void restoreSession();
     void writeProfiles();
     void applyFilters(const QVariantMap &m);
+    // Maps a document's clip paths onto the freshly indexed ids and installs the
+    // edit. Called from the scan that the open started.
+    void applyPendingDocEdit();
     void loadSongFile(const QString &path);
     void noteProgress(int done, int total);
     QString etaSuffix(int done, int total) const;
@@ -219,5 +253,13 @@ private:
     QElapsedTimer m_phaseClock;
     int m_phaseTotal = 0;
     QVariantMap m_profiles;
+    // The project open in the window, and the edit a just-opened one still has to
+    // install once the scan that it started has found its clips.
+    QString m_docPath;
+    QList<DocSeg> m_pendingDocSegs;
+    bool m_docOpen = false;
+    Exporter *m_exporter = nullptr;
+    double m_exportProgress = 0;
+    QString m_exportStatus;
 
 };

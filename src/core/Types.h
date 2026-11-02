@@ -14,7 +14,7 @@ struct Clip {
     bool hasTod = false;
     qint64 size = 0;
     int w = 0, h = 0;
-    QString lrf;          // proxy twin path, empty when none
+    QString lrf;          // proxy twin path (DJI .LRF, GoPro .LRV), empty when none
     double lrfDur = 0;
     qint64 lrfSize = 0;
 
@@ -80,9 +80,18 @@ struct MediaSource {
     bool isDir = false;
 };
 
+// Ken Burns: the frame's zoom and centre at the start and end of the shot. Zoom is
+// never below 1 (the picture fills the frame); the centre is a fraction of the frame.
+struct TlMove {
+    double z0 = 1.0, z1 = 1.0;
+    double cx0 = 0.5, cy0 = 0.5, cx1 = 0.5, cy1 = 0.5;
+    bool still() const { return z0 == 1.0 && z1 == 1.0 && cx0 == cx1 && cy0 == cy1; }
+};
+
 // One segment of an edited timeline: clip `id` from in-point `s` for `len` seconds.
 struct TlSeg {
     int id = -1;
     double s = 0;
     double len = 0;
+    TlMove move;
 };

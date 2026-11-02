@@ -155,6 +155,20 @@ void Show::setEdit(const QList<TlSeg> &segs, const QList<double> &cuts, const QL
     refreshPreview();
 }
 
+void Show::applyView(double songTime) {
+    MpvItem *f = frontSurface();
+    if (!f || m_cutIdx < 0 || m_cutIdx >= m_segs.size()) return;
+    const TlMove &mv = m_segs[m_cutIdx].move;
+    const double len = std::max(0.001, m_segs[m_cutIdx].len);
+    const double p = std::clamp((songTime - m_cuts.value(m_cutIdx, 0.0)) / len, 0.0, 1.0);
+    const double z = mv.z0 + (mv.z1 - mv.z0) * p;
+    const double cx = mv.cx0 + (mv.cx1 - mv.cx0) * p;
+    const double cy = mv.cy0 + (mv.cy1 - mv.cy0) * p;
+    // mpv's pan is positive leftwards, hence the negation: a centre right of the
+    // middle of the frame pans the picture left.
+    f->setView(std::log2(std::max(1.0, z)), -(cx - 0.5), -(cy - 0.5));
+}
+
 void Show::refreshPreview() {
     if (m_surfs.isEmpty()) return;
     // No edit left: let go of the picture rather than leaving the last clip of a
@@ -175,6 +189,7 @@ void Show::refreshPreview() {
     // (on a network share that is a visible stall for no change).
     if (surfaceHolding(idx, target, 1e-6) == m_frontIdx && m_currentClip == m_segs[idx].id) {
         fillLookahead();
+        applyView(m_pos);   // a paused seek shows the shot's opening framing
         return;
     }
 
@@ -196,6 +211,7 @@ void Show::refreshPreview() {
     m_seekStreak = 0;
     m_sinceFrameAdvance.restart();
     fillLookahead();
+    applyView(m_pos);   // a paused seek shows the shot's opening framing
 }
 
 void Show::fillLookahead() {
@@ -491,6 +507,9 @@ void Show::startSegment(int idx, double songTime) {
     m_seekStreak = 0;
     m_sinceFrameAdvance.restart();
     fillLookahead();
+    // A seek lands on a shot's own framing even while paused: tick() only runs
+    // during playback, so this is what a scrubbed, stopped picture shows.
+    applyView(songTime);
 }
 
 void Show::revealSegment(int idx, double songTime) {
@@ -602,6 +621,10 @@ void Show::tick() {
         // While a shot plays, keep every spare surface warm for the cuts ahead.
         fillLookahead();
     }
+
+    // The move follows the song clock, so it is updated whether or not a cut just
+    // happened: a shot that is about to end is at the far end of its push.
+    applyView(m_pos);
 
     // Stall detection before drift correction: if the visible surface stops
     // producing frames while the song runs, it is waiting on the file. Hold the

@@ -8,7 +8,7 @@
 #include <QSet>
 
 // Scans the project's sources (folders and loose files), indexes each video with
-// ffprobe, pairs DJI .LRF proxies, and computes the interest score (motion /
+// ffprobe, pairs camera proxies (.LRF, .LRV), and computes the interest score (motion /
 // colour / exposure / variety) in the background.
 //
 // Threading: every member here is touched on the main thread only. The worker

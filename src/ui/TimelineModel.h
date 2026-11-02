@@ -19,6 +19,8 @@ class TimelineModel : public QAbstractListModel {
     Q_PROPERTY(QString selectionInfo READ selectionInfo NOTIFY selectedChanged)
     Q_PROPERTY(QString stats READ stats NOTIFY statsChanged)
     Q_PROPERTY(bool hasTimeline READ hasTimeline NOTIFY countChanged)
+    Q_PROPERTY(bool canUndo READ canUndo NOTIFY historyChanged)
+    Q_PROPERTY(bool canRedo READ canRedo NOTIFY historyChanged)
     // Length the edit was cut to. The player's duration can still be unknown while
     // mpv opens the file; layout must not depend on it.
     Q_PROPERTY(double songDuration READ songDuration NOTIFY songDurationChanged)
@@ -87,6 +89,16 @@ public:
     Q_INVOKABLE void replaceSegment(int row, int clipId, double inPoint);
     Q_INVOKABLE void rerollAll();
     Q_INVOKABLE QString thumbForSegment(int index) const;
+    // The edit's own history. Every mutating operation pushes a snapshot before it
+    // changes anything, so undo/redo restore an exact previous state — the three
+    // lists are small and there are no command objects to keep in step.
+    bool canUndo() const { return !m_undo.isEmpty(); }
+    bool canRedo() const { return !m_redo.isEmpty(); }
+    Q_INVOKABLE void undo();
+    Q_INVOKABLE void redo();
+    // Replace the whole edit with one loaded from a document. No history: it is a
+    // different edit, not a step inside this one.
+    void adoptEdit(const QList<TlSeg> &segs, const QList<double> &fades);
 
     QVariantList commands() const;
     Q_INVOKABLE QString commandKey(const QString &id) const;
@@ -99,8 +111,22 @@ signals:
     void editsChanged();
     void statsChanged();
     void changed();   // structure or lengths changed: re-render the stage
+    void historyChanged();
 
 private:
+    // Everything a mutator can change, captured in one value.
+    struct Snapshot {
+        QList<TlSeg> segs;
+        QList<double> fades;
+        QList<int> poolIds;
+        int sel = -1;
+        int edits = 0;
+    };
+    static constexpr int kHistoryDepth = 100;
+    void pushUndo();          // call after the guards, before the first mutation
+    void restore(const Snapshot &snap);
+    void clearHistory();
+    QList<Snapshot> m_undo, m_redo;
     void touch();
     void applyPool(const QList<int> &poolIds);
 

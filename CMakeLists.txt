@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.21)
 
 project(vibeslideshow
-    VERSION 1.3.0
+    VERSION 1.4.0
     DESCRIPTION "Beat-synced slideshow editor for your own footage"
     HOMEPAGE_URL "https://github.com/nemvince/vibeslideshow"
     LANGUAGES CXX)
@@ -65,6 +65,12 @@ qt_add_executable(vibeslideshow
     src/core/Scheduler.cpp
     src/core/Library.h
     src/core/Library.cpp
+    src/core/Document.h
+    src/core/Document.cpp
+    src/core/RenderPlan.h
+    src/core/RenderPlan.cpp
+    src/core/Exporter.h
+    src/core/Exporter.cpp
     src/player/MpvItem.h
     src/player/MpvItem.cpp
     src/player/Show.h

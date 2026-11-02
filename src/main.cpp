@@ -4,9 +4,15 @@
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QStringList>
+#include <QCoreApplication>
+#include <QEventLoop>
+#include <QRegularExpression>
 #include <cstdio>
 #include <clocale>
 
+#include "core/Document.h"
+#include "core/Exporter.h"
+#include "core/RenderPlan.h"
 #include "player/MpvItem.h"
 #include "player/Show.h"
 #include "ui/ClipModel.h"
@@ -16,6 +22,71 @@
 #ifndef VIBESLIDESHOW_VERSION
 #define VIBESLIDESHOW_VERSION "0.0.0"
 #endif
+
+namespace {
+
+// `vibeslideshow --render project.vibes --out film.mp4`. Handled before any GUI
+// object exists: a build machine has no display, and QGuiApplication aborts
+// without a platform plugin.
+int runRender(int argc, char *argv[], const QString &project, const QString &out,
+              const QString &quality, const QString &size) {
+    QCoreApplication app(argc, argv);
+    // ffmpeg and the filter expressions this builds are formatted in the C locale.
+    std::setlocale(LC_NUMERIC, "C");
+    if (out.isEmpty()) {
+        std::fprintf(stderr, "--render needs --out <file.mp4>\n");
+        return 2;
+    }
+    Document doc;
+    QString err;
+    if (!loadDocument(project, &doc, &err)) {
+        std::fprintf(stderr, "%s\n", qPrintable(err));
+        return 1;
+    }
+    Exporter::Options opt;
+    if (quality == QLatin1String("draft")) opt.quality = Exporter::Quality::Draft;
+    else if (quality == QLatin1String("high")) opt.quality = Exporter::Quality::High;
+    else if (quality == QLatin1String("balanced") || quality.isEmpty())
+        opt.quality = Exporter::Quality::Balanced;
+    else {
+        std::fprintf(stderr, "unknown --quality %s (draft, balanced or high)\n", qPrintable(quality));
+        return 2;
+    }
+    if (!size.isEmpty()) {
+        static const QRegularExpression re(QStringLiteral("^(\\d+)x(\\d+)$"));
+        const QRegularExpressionMatch m = re.match(size);
+        if (!m.hasMatch() || m.captured(1).toInt() <= 0 || m.captured(2).toInt() <= 0) {
+            std::fprintf(stderr, "unknown --size %s (WIDTHxHEIGHT, e.g. 1920x1080)\n", qPrintable(size));
+            return 2;
+        }
+        opt.size = QSize(m.captured(1).toInt(), m.captured(2).toInt());
+    }
+
+    Exporter exporter;
+    QEventLoop loop;
+    bool ok = false;
+    QString message;
+    QObject::connect(&exporter, &Exporter::progress, &loop, [](double frac, const QString &what) {
+        std::fprintf(stderr, "\r%3d %%  %s", int(frac * 100), qPrintable(what));
+        std::fflush(stderr);
+    });
+    QObject::connect(&exporter, &Exporter::finished, &loop, [&](bool good, const QString &m) {
+        ok = good;
+        message = m;
+        loop.quit();
+    });
+    exporter.start(renderSegsFromDocument(doc), doc.song, out, opt);
+    loop.exec();
+    std::fprintf(stderr, "\r          \r");   // wipe the progress line
+    if (!ok) {
+        std::fprintf(stderr, "%s\n", qPrintable(message));
+        return 1;
+    }
+    std::printf("%s\n", qPrintable(message));
+    return 0;
+}
+
+} // namespace
 
 int main(int argc, char *argv[]) {
     // Answer --version before anything else: constructing QGuiApplication needs a
@@ -28,6 +99,26 @@ int main(int argc, char *argv[]) {
             return 0;
         }
     }
+
+    // --render: a batch job, no window. Parsed and run before QGuiApplication for
+    // the same reason as --version above.
+    bool wantRender = false;
+    QString project, out, quality, size;
+    for (int i = 1; i < argc; i++) {
+        const QString arg = QString::fromLocal8Bit(argv[i]);
+        const bool hasNext = i + 1 < argc;
+        if (arg == QLatin1String("--render")) {
+            wantRender = true;
+            if (hasNext) project = QString::fromLocal8Bit(argv[++i]);
+        } else if (arg == QLatin1String("--out") && hasNext) {
+            out = QString::fromLocal8Bit(argv[++i]);
+        } else if (arg == QLatin1String("--quality") && hasNext) {
+            quality = QString::fromLocal8Bit(argv[++i]);
+        } else if (arg == QLatin1String("--size") && hasNext) {
+            size = QString::fromLocal8Bit(argv[++i]);
+        }
+    }
+    if (wantRender) return runRender(argc, argv, project, out, quality, size);
 
     // MUST happen before the app is constructed: with the Vulkan RHI the content
     // of a QQuickFramebufferObject never reaches the screen (silent black video).
