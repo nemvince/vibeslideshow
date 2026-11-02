@@ -78,11 +78,12 @@ the code looks next to the binary first (and honours `VIBESLIDESHOW_TOOLS_DIR`).
    (chill / build / loud / drop) and any stutter it already has, then cuts the
    first edit for you.
 4. **The bin** on the left is the project's flat clip list: a search box filters
-   it by name, hovering a row shows a ✕ that removes that one clip, and clips the
-   filters exclude stay visible but dimmed. Removing footage — a clip, or a whole
-   import via **Project…** — takes its shots out of the edit and hands their time
-   to the last shot, so the song stays covered; a removed clip stays out on later
-   rescans until you import it again.
+   it by name, a click puts a clip into the show at the playhead, and a
+   right-click opens a menu on that clip — insert it, or remove it from the
+   project. Clips the filters exclude stay visible but dimmed. Removing footage
+   — a clip, or a whole import via **Project…** — takes its shots out of the
+   edit and hands their time to the last shot, so the song stays covered; a
+   removed clip stays out on later rescans until you import it again.
 5. The panel on the right is a set of tools, each named after what it does to the
    video and each saying its effect in words instead of a raw number:
 

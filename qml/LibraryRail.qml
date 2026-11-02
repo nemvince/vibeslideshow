@@ -140,38 +140,19 @@ Rectangle {
                 HoverHandler { id: hover }
                 MouseArea {
                     anchors.fill: parent
-                    // Dropping a clip in needs a settled edit to drop it into.
-                    enabled: studio.workspaceEnabled
-                    cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
-                    // Click a clip to drop it into the show at the playhead.
-                    onClicked: studio.newInPointAt(model.clipId, showCtl.position)
-                }
-
-                // Declared after the row MouseArea: later siblings stack on top,
-                // so the ✕ gets the click instead of the row underneath it.
-                Item {
-                    id: removeBtn
-                    anchors { right: parent.right; rightMargin: 4; verticalCenter: parent.verticalCenter }
-                    width: 22
-                    height: 22
-                    visible: hover.hovered
-
-                    Rectangle {
-                        anchors.fill: parent
-                        radius: 4
-                        color: removeHover.hovered ? Theme.panelHi : "transparent"
-                    }
-                    Text {
-                        anchors.centerIn: parent
-                        text: "✕"
-                        color: removeHover.hovered ? Theme.ink : Theme.faint
-                        font.pixelSize: 10
-                    }
-                    HoverHandler { id: removeHover }
-                    MouseArea {
-                        anchors.fill: parent
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: studio.removeClip(model.clipId)
+                    acceptedButtons: Qt.LeftButton | Qt.RightButton
+                    // Dropping a clip in needs a settled edit to drop it into;
+                    // the menu itself works at any time.
+                    cursorShape: studio.workspaceEnabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+                    // Click a clip to drop it into the show at the playhead,
+                    // right-click it for what else can be done with it.
+                    onClicked: (mouse) => {
+                        if (mouse.button === Qt.RightButton) {
+                            const p = mapToItem(rail, mouse.x, mouse.y)
+                            rail.openClipMenu(model.clipId, model.name, p.x, p.y)
+                        } else if (studio.workspaceEnabled) {
+                            studio.newInPointAt(model.clipId, showCtl.position)
+                        }
                     }
                 }
             }
@@ -185,6 +166,152 @@ Rectangle {
                 text: studio.busy ? "Looking for footage…" : "No footage yet — import files or a folder"
                 color: Theme.faint
                 font.pixelSize: 12
+            }
+        }
+    }
+
+    // What can be done with a clip in the bin. One table, so the menu's rows and
+    // the actions they run cannot drift apart.
+    readonly property var clipActions: [
+        { id: "insert", label: "Insert at playhead", destructive: false },
+        { id: "remove", label: "Remove from project", destructive: true }
+    ]
+
+    // Open the clip menu at (x, y), in this pane's coordinates, on `clipId`.
+    function openClipMenu(clipId, name, x, y) {
+        clipMenu.clipId = clipId
+        clipMenu.clipName = name
+        const h = clipMenu.implicitHeight
+        clipMenu.x = Math.max(0, Math.min(rail.width - clipMenu.width, x))
+        clipMenu.y = (y + h > rail.height) ? Math.max(0, y - h) : y
+        clipMenu.active = clipMenu.firstEnabled()
+        clipMenu.open()
+    }
+
+    // The clip menu: what a right-click on a bin row offers. Inserting needs a
+    // settled edit to insert into; removing needs nothing but the clip.
+    //
+    // A plain Popup, styled like the timeline's ClipMenu: the app's menus are
+    // hand-drawn, and Menu's internal content item makes custom rows awkward.
+    Popup {
+        id: clipMenu
+        objectName: "binClipMenu"
+        property int clipId: -1
+        property string clipName: ""
+        // Row under the keyboard, -1 when nothing is highlighted.
+        property int active: -1
+
+        width: 232
+        implicitHeight: col.implicitHeight + 12
+        padding: 6
+        modal: false
+        focus: true
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+
+        background: Rectangle {
+            color: Theme.panelHi
+            radius: 10
+            border.color: Theme.line
+        }
+
+        function enabledFor(id) {
+            if (id === "insert") return studio.workspaceEnabled
+            return true
+        }
+        function firstEnabled() {
+            for (let i = 0; i < rail.clipActions.length; i++)
+                if (enabledFor(rail.clipActions[i].id)) return i
+            return -1
+        }
+        // Move the highlight to the next row that can actually run, wrapping.
+        function step(delta) {
+            const n = rail.clipActions.length
+            if (n === 0) return
+            let i = active
+            for (let k = 0; k < n; k++) {
+                i = (i + delta + n) % n
+                if (enabledFor(rail.clipActions[i].id)) { active = i; return }
+            }
+        }
+        function run(id) {
+            if (!id || !enabledFor(id)) return
+            const target = clipMenu.clipId
+            close()
+            if (id === "insert") studio.newInPointAt(target, showCtl.position)
+            else studio.removeClip(target)
+        }
+        onOpened: col.forceActiveFocus()
+        onClosed: {
+            active = -1
+            clipId = -1
+        }
+
+        contentItem: Column {
+            id: col
+            spacing: 2
+            focus: true
+
+            Keys.onUpPressed: clipMenu.step(-1)
+            Keys.onDownPressed: clipMenu.step(1)
+            Keys.onReturnPressed: clipMenu.run(clipMenu.active >= 0 ? rail.clipActions[clipMenu.active].id : "")
+            Keys.onEnterPressed: clipMenu.run(clipMenu.active >= 0 ? rail.clipActions[clipMenu.active].id : "")
+
+            // Which clip the menu acts on: a menu on a row is meaningless without
+            // the row's name in it.
+            Text {
+                width: col.width - 8
+                leftPadding: 8
+                rightPadding: 8
+                topPadding: 2
+                bottomPadding: 5
+                text: clipMenu.clipName
+                color: Theme.faint
+                font.pixelSize: 10
+                elide: Text.ElideMiddle
+            }
+
+            Repeater {
+                model: rail.clipActions
+                delegate: Item {
+                    id: actionRow
+                    required property int index
+                    required property var modelData
+                    property string rowId: modelData.id
+
+                    width: col.width
+                    height: 28
+                    opacity: clipMenu.enabledFor(modelData.id) ? 1 : 0.4
+
+                    Rectangle {
+                        anchors.fill: parent
+                        anchors.topMargin: 1
+                        radius: 6
+                        color: clipMenu.active === actionRow.index ? Theme.bg
+                               : (actionHover.hovered ? Theme.bg : "transparent")
+                    }
+                    Text {
+                        anchors {
+                            left: parent.left
+                            leftMargin: 10
+                            right: parent.right
+                            rightMargin: 10
+                            verticalCenter: parent.verticalCenter
+                        }
+                        text: actionRow.modelData.label
+                        font.pixelSize: 11
+                        color: actionRow.modelData.destructive ? Theme.bad : Theme.ink
+                        elide: Text.ElideRight
+                    }
+
+                    HoverHandler { id: actionHover }
+                    MouseArea {
+                        anchors.fill: parent
+                        enabled: clipMenu.enabledFor(actionRow.modelData.id)
+                        cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+                        onEntered: if (enabled) clipMenu.active = actionRow.index
+                        onClicked: clipMenu.run(actionRow.modelData.id)
+                    }
+                }
             }
         }
     }
