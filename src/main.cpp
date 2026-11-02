@@ -60,6 +60,14 @@ int main(int argc, char *argv[]) {
     engine.rootContext()->setContextProperty(QStringLiteral("timeline"), studio.timeline());
     engine.rootContext()->setContextProperty(QStringLiteral("showCtl"), studio.show());
 
+    // A packaged bundle keeps its QML modules in qml/ next to the executable, and
+    // nothing tells Qt that. Without this the import path list starts at the
+    // resource system, where QtQuick.Controls exists but its plugin cannot: the
+    // module resolves, the plugin does not, and the app dies at the second line of
+    // Studio.qml with "plugin qtquickcontrols2plugin not found". Harmless when
+    // there is no such directory (a build tree, a system Qt).
+    engine.addImportPath(QCoreApplication::applicationDirPath() + QStringLiteral("/qml"));
+
     QObject::connect(&engine, &QQmlApplicationEngine::objectCreationFailed, &app,
                      []() { QCoreApplication::exit(1); }, Qt::QueuedConnection);
     engine.load(QUrl(QStringLiteral("qrc:/qml/Studio.qml")));
