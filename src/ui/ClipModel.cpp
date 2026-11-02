@@ -108,7 +108,7 @@ ClipModel::ClipModel(QObject *parent) : QAbstractListModel(parent) {
     connect(m_jobs, &ThumbJobs::done, this, [this](const QString &key, const QString &path, bool ok) {
         m_pendingThumbs.remove(key);
         if (!ok) return;
-        const int id = key.section(QLatin1Char(':'), 0, 0).toInt();
+        const int id = key.section(QLatin1Char('-'), 0, 0).toInt();
         m_thumbs.insert(id, path);
         for (int row = 0; row < m_ids.size(); row++) {
             if (m_ids[row] != id) continue;

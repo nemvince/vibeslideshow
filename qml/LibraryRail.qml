@@ -106,9 +106,12 @@ Rectangle {
                 height: 54
                 opacity: model.inPool ? 1 : 0.32
 
-                // A row asks for its own still when the view builds it, so the
-                // bin never encodes the whole folder to show the first page.
+                // A row asks for its own still when it is built, and again when a
+                // scrolling view recycles it onto a different clip — the delegate
+                // keeps its identity, only `index` changes — so the bin never
+                // encodes a whole folder to show the first page.
                 Component.onCompleted: clips.ensureThumbs(index, index)
+                onIndexChanged: clips.ensureThumbs(index, index)
 
                 Behavior on opacity { NumberAnimation { duration: Theme.durFast } }
 
