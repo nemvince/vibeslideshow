@@ -13,30 +13,58 @@ Item {
     // only thing animating, so nothing else has to know about the crossfade.
     property real mix: 1.0
 
+    // The preview is a 16:9 window: as large as the space allows, centred, with
+    // the app's own background around it. Everything inside — mpv, the frame, the
+    // crossfade — is this rectangle, so a 4:3 or a vertical clip is letterboxed by
+    // mpv inside a frame that never changes shape and never pushes the chrome
+    // around when the window is resized.
+    readonly property real frameW: Math.floor(Math.min(width, height * 16.0 / 9.0))
+    readonly property real frameH: Math.floor(frameW * 9.0 / 16.0)
+
     Rectangle {
         anchors.fill: parent
-        color: "#000000"
+        color: Theme.bg
     }
 
-    // Two surfaces so a cut never has to blank the screen: the incoming one is
-    // already decoded and paused on its first frame when the fade starts.
-    // Both surfaces are ALWAYS visible and always rendered. This is not an
-    // optimisation detail: Qt skips painting an item at opacity 0 or with
-    // visible:false, and a skipped item never calls mpv's render API. Under
-    // MPV_RENDER_PARAM_ADVANCED_CONTROL, mpv then stalls the hidden surface, so
-    // "preloaded" would mean "loaded but stuck on its first frame" and every cut
-    // would show a stale frame and need a corrective seek. The epsilon keeps the
-    // hidden surface painting while being invisible to the eye.
-    readonly property real hiddenOpacity: 0.0001
-    MpvItem {
-        id: surfA
-        anchors.fill: parent
-        opacity: stage.hiddenOpacity + (1.0 - 2.0 * stage.hiddenOpacity) * stage.mix
-    }
-    MpvItem {
-        id: surfB
-        anchors.fill: parent
-        opacity: stage.hiddenOpacity + (1.0 - 2.0 * stage.hiddenOpacity) * (1.0 - stage.mix)
+    Item {
+        id: frame
+        width: stage.frameW
+        height: stage.frameH
+        anchors.centerIn: parent
+
+        Rectangle {
+            anchors.fill: parent
+            color: "#000000"
+        }
+
+        // Two surfaces so a cut never has to blank the screen: the incoming one is
+        // already decoded and paused on its first frame when the fade starts.
+        // Both surfaces are ALWAYS visible and always rendered. This is not an
+        // optimisation detail: Qt skips painting an item at opacity 0 or with
+        // visible:false, and a skipped item never calls mpv's render API. Under
+        // MPV_RENDER_PARAM_ADVANCED_CONTROL, mpv then stalls the hidden surface, so
+        // "preloaded" would mean "loaded but stuck on its first frame" and every cut
+        // would show a stale frame and need a corrective seek. The epsilon keeps the
+        // hidden surface painting while being invisible to the eye.
+        readonly property real hiddenOpacity: 0.0001
+        MpvItem {
+            id: surfA
+            anchors.fill: parent
+            opacity: frame.hiddenOpacity + (1.0 - 2.0 * frame.hiddenOpacity) * stage.mix
+        }
+        MpvItem {
+            id: surfB
+            anchors.fill: parent
+            opacity: frame.hiddenOpacity + (1.0 - 2.0 * frame.hiddenOpacity) * (1.0 - stage.mix)
+        }
+
+        // A hairline so the picture has an edge against the app background.
+        Rectangle {
+            anchors.fill: parent
+            color: "transparent"
+            border.color: Theme.line
+            border.width: 1
+        }
     }
 
     NumberAnimation {

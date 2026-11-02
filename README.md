@@ -96,6 +96,13 @@ being read, playback, the edit actions, timeline scrubbing, the rail's
 drop-in-a-clip click and the keyboard shortcuts are all off. Scoring only fills in
 numbers, so the workspace stays usable while it runs.
 
+The window is a three-pane editor at any size (960×620 and up). The preview is
+always a 16:9 frame, as large as the stage allows and letterboxed by mpv inside
+it, so a 4:3 or vertical clip never changes the shape of the window. The timeline
+takes every pixel the preview does not need — widening the window makes it taller,
+since the preview's height follows its width — and the rail and settings panel
+scale with the window instead of holding a fixed size.
+
 Space plays and pauses, arrow keys nudge ±5 s, `Ctrl+G` regenerates the edit,
 `Esc` stops. The keys stand down while a text field has focus, and while the
 workspace is locked.

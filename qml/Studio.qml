@@ -8,8 +8,11 @@ ApplicationWindow {
     id: root
     width: 1440
     height: 900
-    minimumWidth: 1080
-    minimumHeight: 700
+    // Small enough to fit a laptop screen next to the rest of the desktop, large
+    // enough that every pane still has room. The layout below is proportional, so
+    // nothing breaks between these and full screen.
+    minimumWidth: 960
+    minimumHeight: 620
     visible: true
     title: "vibeslideshow"
     color: palette.window
@@ -63,7 +66,8 @@ ApplicationWindow {
             Rectangle { implicitWidth: 1; implicitHeight: 20; color: Theme.line }
 
             // Song: name, then what the analyser made of it, then status. Each is
-            // its own column so they never jam together.
+            // its own column so they never jam together; both narrow down before
+            // the row has to give anything up.
             Column {
                 Layout.alignment: Qt.AlignVCenter
                 spacing: 2
@@ -72,7 +76,7 @@ ApplicationWindow {
                     color: studio.songName.length ? Theme.ink : Theme.faint
                     font.pixelSize: 13
                     elide: Text.ElideRight
-                    width: Math.min(implicitWidth, 280)
+                    width: Math.min(implicitWidth, root.width < 1200 ? 170 : 280)
                 }
                 Text {
                     text: studio.songAnalysed ? studio.songSummary : " "
@@ -80,27 +84,31 @@ ApplicationWindow {
                     color: Theme.faint
                     font.pixelSize: 10
                     elide: Text.ElideRight
-                    width: Math.min(implicitWidth, 280)
+                    width: Math.min(implicitWidth, root.width < 1200 ? 170 : 280)
                     height: 12
                 }
             }
 
-            Rectangle { implicitWidth: 1; implicitHeight: 20; color: Theme.line; visible: studio.status.length > 0 }
+            Rectangle { implicitWidth: 1; implicitHeight: 20; color: Theme.line; visible: statusText.visible && statusText.text.length > 0 }
 
             // While a pass runs this slot carries the live progress + ETA;
             // otherwise it carries whatever the app last said.
             Text {
+                id: statusText
                 text: studio.busy ? studio.progressLabel : studio.status
                 color: studio.busy ? Theme.dim : Theme.faint
                 font.pixelSize: 11
                 elide: Text.ElideRight
-                Layout.maximumWidth: 300
+                Layout.maximumWidth: root.width < 1200 ? 190 : 300
                 Layout.alignment: Qt.AlignVCenter
             }
 
             Item { Layout.fillWidth: true }
 
+            // The first thing to go when the window is narrow: it is a nicety, and
+            // the rail already shows the same counts.
             Text {
+                visible: root.width >= 1120
                 text: studio.libraryCount + " clips · " + studio.poolCount + " in pool"
                 color: Theme.dim
                 font.pixelSize: 11
@@ -137,7 +145,7 @@ ApplicationWindow {
         LibraryRail {
             id: rail
             anchors { top: parent.top; bottom: parent.bottom; left: parent.left }
-            width: 292
+            width: Math.round(Math.max(220, Math.min(340, root.width * 0.20)))
         }
 
         // Center: the stage.
@@ -157,7 +165,14 @@ ApplicationWindow {
     Rectangle {
         id: transport
         anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
-        height: 168
+        // The preview is 16:9 at the current stage width, so its height is decided
+        // by the width of the window; the timeline gets everything that is left
+        // over, within bounds. Making the window wider therefore makes the timeline
+        // taller, which is the only part of the window that wants more height.
+        readonly property real stageWidth: Math.max(0, root.width - rail.width - sidePanel.width)
+        readonly property real previewHeight: stageWidth * 9.0 / 16.0
+        height: Math.round(Math.max(170, Math.min(root.height * 0.42,
+                                                  root.height - topBar.height - previewHeight)))
         color: Theme.panel
 
         Rectangle { anchors.top: parent.top; width: parent.width; height: 1; color: Theme.line }

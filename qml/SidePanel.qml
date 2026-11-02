@@ -11,7 +11,9 @@ Rectangle {
     id: panel
     color: Theme.panel
     property bool collapsed: false
-    implicitWidth: collapsed ? 36 : 336
+    // Follows the window, like the rail does, so the stage keeps a sane share of
+    // the width on a small screen and the panel does not sprawl on a big one.
+    implicitWidth: collapsed ? 36 : Math.round(Math.max(280, Math.min(380, parent.width * 0.245)))
 
     Behavior on implicitWidth { NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
 
