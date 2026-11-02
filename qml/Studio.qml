@@ -14,6 +14,10 @@ ApplicationWindow {
     title: "vibeslideshow"
     color: palette.window
 
+    // Set while the native folder picker is open on top of the footage menu, so the
+    // list comes back afterwards instead of dropping the user out of the flow.
+    property bool reopenFootage: false
+
 
     PanelBackground { anchors.fill: parent }
 
@@ -260,13 +264,146 @@ ApplicationWindow {
         id: folderDialog
         objectName: "folderDialog"
         title: "Add a footage folder"
-        onAccepted: studio.addFolder(selectedFolder)
+        onAccepted: {
+            studio.addFolder(selectedFolder)
+            if (root.reopenFootage) footageDialog.open()
+        }
+        onRejected: if (root.reopenFootage) footageDialog.open()
+    }
+
+    // One place to manage footage: every folder the library scans, with the
+    // remove button next to it. Adding lives here too, so there is never a
+    // second, staler copy of this list anywhere in the UI.
+    //
+    // Plain Popup + Column on purpose: a Dialog with a custom contentItem gets
+    // no content height from the layout and opens as an empty sliver.
+    Popup {
+        id: footageDialog
+        objectName: "footageDialog"
+        modal: true
+        focus: true
+        anchors.centerIn: Overlay.overlay
+        width: 560
+        padding: 18
+        closePolicy: Popup.CloseOnEscape
+        background: Rectangle {
+            color: Theme.panel
+            radius: Theme.radius
+            border.color: Theme.line
+        }
+
+        contentItem: Column {
+            id: footageCol
+            spacing: 10
+
+            Text {
+                text: "Footage folders"
+                color: Theme.ink
+                font.pixelSize: 14
+                font.weight: Font.DemiBold
+            }
+
+            Column {
+                id: dirList
+                width: footageCol.width
+                spacing: 6
+
+                Repeater {
+                    model: studio.videoDirs
+                    delegate: Item {
+                        required property string modelData
+                        width: dirList.width
+                        height: 34
+
+                        Rectangle {
+                            anchors {
+                                left: parent.left
+                                right: removeBtn.left
+                                rightMargin: 8
+                                top: parent.top
+                                bottom: parent.bottom
+                            }
+                            radius: 6
+                            color: Theme.bg
+                            border.color: Theme.line
+                            Text {
+                                anchors.fill: parent
+                                anchors.leftMargin: 10
+                                anchors.rightMargin: 10
+                                verticalAlignment: Text.AlignVCenter
+                                text: modelData
+                                color: Theme.ink
+                                font.pixelSize: 12
+                                elide: Text.ElideMiddle
+                            }
+                        }
+                        SmallButton {
+                            id: removeBtn
+                            anchors { right: parent.right; verticalCenter: parent.verticalCenter }
+                            text: "Remove"
+                            onClicked: studio.removeFolder(modelData)
+                        }
+                    }
+                }
+            }
+
+            Text {
+                width: footageCol.width
+                visible: studio.videoDirs.length === 0
+                text: "No folders yet — the library is empty."
+                color: Theme.faint
+                font.pixelSize: 12
+                wrapMode: Text.WordWrap
+            }
+
+            Item {
+                width: footageCol.width
+                height: 40
+
+                Column {
+                    anchors { left: parent.left; verticalCenter: parent.verticalCenter }
+                    spacing: 5
+                    Text {
+                        text: studio.busy ? studio.progressLabel : studio.libraryCount + " clips indexed"
+                        color: Theme.faint
+                        font.pixelSize: 11
+                    }
+                    ProgressLine {
+                        width: 170
+                        height: 4
+                        visible: studio.busy
+                        active: studio.busy
+                        value: studio.progress
+                    }
+                }
+                Row {
+                    anchors { right: parent.right; verticalCenter: parent.verticalCenter }
+                    spacing: 8
+                    SmallButton {
+                        text: "Add folder…"
+                        onClicked: {
+                            root.reopenFootage = true
+                            footageDialog.close()
+                            folderDialog.open()
+                        }
+                    }
+                    SmallButton {
+                        text: "Done"
+                        accent: true
+                        onClicked: {
+                            root.reopenFootage = false
+                            footageDialog.close()
+                        }
+                    }
+                }
+            }
+        }
     }
 
     Connections {
         target: studio
         function onSongDialogRequested() { songDialog.open() }
-        function onFolderDialogRequested() { folderDialog.open() }
+        function onFolderDialogRequested() { footageDialog.open() }
     }
 
     // ---- keybindings: space toggles, arrows nudge ------------------------

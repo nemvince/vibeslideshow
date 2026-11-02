@@ -163,59 +163,6 @@ Rectangle {
             PanelSection {
                 title: "Footage"
 
-                // Which folders the library scans, and the way to add another — the
-                // native folder picker, same as the top bar button.
-                ColumnLayout {
-                    Layout.fillWidth: true
-                    spacing: 4
-
-                    Repeater {
-                        model: studio.videoDirs
-                        delegate: RowLayout {
-                            required property string modelData
-                            Layout.fillWidth: true
-                            spacing: 6
-                            Text {
-                                Layout.fillWidth: true
-                                text: modelData
-                                color: Theme.dim
-                                font.pixelSize: 10
-                                elide: Text.ElideMiddle
-                            }
-                            Item {
-                                width: 18; height: 18
-                                Text {
-                                    anchors.centerIn: parent
-                                    text: "✕"
-                                    color: rmHover.hovered ? Theme.ink : Theme.faint
-                                    font.pixelSize: 10
-                                }
-                                HoverHandler { id: rmHover }
-                                MouseArea {
-                                    anchors.fill: parent
-                                    cursorShape: Qt.PointingHandCursor
-                                    onClicked: studio.removeFolder(modelData)
-                                }
-                            }
-                        }
-                    }
-
-                    Text {
-                        visible: studio.videoDirs.length === 0
-                        text: "No folders yet"
-                        color: Theme.faint
-                        font.pixelSize: 10
-                    }
-
-                    SmallButton {
-                        text: "Add folder…"
-                        flat: true
-                        onClicked: studio.openFolderDialog()
-                    }
-                }
-
-                Rectangle { Layout.fillWidth: true; implicitHeight: 1; color: Theme.line; Layout.topMargin: 2; Layout.bottomMargin: 2 }
-
                 FilterRow {
                     Layout.fillWidth: true
                     label: "Best clips only"
