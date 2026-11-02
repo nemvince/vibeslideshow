@@ -18,21 +18,28 @@ qt_standard_project_setup(REQUIRES 6.5)
 # otherwise. MSYS2's mpv.pc emits POSIX prefixes ("-I/ucrt64/include") that a
 # native Windows CMake cannot resolve, so a result with non-existent include
 # directories is treated as no result at all.
+# pkg_check_modules leaves PkgConfig::MPV behind even when the result is rejected,
+# so the decision is carried in a flag rather than in MPV_FOUND.
+set(MPV_VIA_PKGCONFIG OFF)
 find_package(PkgConfig QUIET)
 if(PkgConfig_FOUND)
     pkg_check_modules(MPV QUIET IMPORTED_TARGET mpv)
     if(MPV_FOUND)
+        set(_mpv_usable ON)
         foreach(_mpv_dir IN LISTS MPV_INCLUDE_DIRS)
             if(NOT EXISTS "${_mpv_dir}")
                 message(STATUS "libmpv: pkg-config gave unusable path '${_mpv_dir}', using find_path/find_library")
-                unset(MPV_FOUND)
+                set(_mpv_usable OFF)
                 break()
             endif()
         endforeach()
+        if(_mpv_usable)
+            set(MPV_VIA_PKGCONFIG ON)
+        endif()
     endif()
 endif()
 
-if(NOT MPV_FOUND)
+if(NOT MPV_VIA_PKGCONFIG)
     # MSYS2/MinGW is the case this exists for: hint the real installation root.
     set(_mpv_hints "${MPV_ROOT}" "${CMAKE_PREFIX_PATH}" "$ENV{MINGW_PREFIX}")
     find_path(MPV_INCLUDE_DIR mpv/client.h
@@ -83,7 +90,7 @@ target_link_libraries(vibeslideshow PRIVATE
     Qt6::Gui
 )
 
-if(TARGET PkgConfig::MPV)
+if(MPV_VIA_PKGCONFIG)
     target_link_libraries(vibeslideshow PRIVATE PkgConfig::MPV)
 else()
     target_include_directories(vibeslideshow PRIVATE ${MPV_INCLUDE_DIR})
