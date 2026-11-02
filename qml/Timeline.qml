@@ -313,16 +313,26 @@ Item {
                 // Wheel scrolls (either axis: a trackpad swipes sideways), and
                 // ctrl+wheel zooms around the middle of the view.
                 WheelHandler {
+                    acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+                    blocking: true
                     onWheel: (event) => {
+                        // Trackpads and precision wheels report pixel deltas instead
+                        // of the 120-unit notch, and "natural scrolling" reports
+                        // them inverted: honour both, or a touchpad scrolls the
+                        // strip the wrong way and stops dead at the left edge.
+                        const sign = event.inverted ? -1 : 1
+                        const dx = sign * (event.angleDelta.x || event.pixelDelta.x)
+                        const dy = sign * (event.angleDelta.y || event.pixelDelta.y)
+
                         if (event.modifiers & Qt.ControlModifier) {
-                            tl.setZoom(tl.zoom * (event.angleDelta.y > 0 ? 1.2 : 1 / 1.2))
+                            // Proportional to the gesture: one notch is about 23 %,
+                            // one touchpad tick a percent or two, so a smooth
+                            // scroll does not slam the zoom between the limits.
+                            const step = Math.max(-240, Math.min(240, dy))
+                            if (step !== 0) tl.setZoom(tl.zoom * Math.pow(2, step / 400))
                         } else if (tl.zoomed) {
-                            // Trackpads and precision wheels report pixels rather
-                            // than the 120-unit notch; fall back to those.
-                            const dx = event.angleDelta.x || event.pixelDelta.x
-                            const dy = event.angleDelta.y || event.pixelDelta.y
-                            // A sideways swipe is already the direction we scroll in;
-                            // a vertical wheel scrolls the song left and right.
+                            // A sideways swipe is already the direction we scroll
+                            // in; a vertical wheel scrolls the song left and right.
                             if (Math.abs(dx) > Math.abs(dy)) surface.pan(-dx)
                             else surface.pan(dy)
                         }

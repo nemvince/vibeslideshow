@@ -253,7 +253,7 @@ ApplicationWindow {
                 // segments get wide enough to show their previews.
                 IconButton {
                     glyph: "\u2212"
-                    tip: "Zoom the timeline out"
+                    tip: "Zoom out (Ctrl+scroll over the timeline)"
                     enabled: tl.zoom > 1.001
                     onClicked: tl.zoomOut()
                 }
@@ -267,7 +267,7 @@ ApplicationWindow {
                 }
                 IconButton {
                     glyph: "+"
-                    tip: "Zoom the timeline in"
+                    tip: "Zoom in (Ctrl+scroll over the timeline)"
                     enabled: tl.zoom < tl.maxZoom
                     onClicked: tl.zoomIn()
                 }
