@@ -156,7 +156,10 @@ check_imports() {
     while read -r imp; do
         [ -n "$imp" ] || continue
         [ -f "$STAGE/$imp" ] && continue
-        [ -n "$SYSTEM32" ] && [ -f "$SYSTEM32/$imp" ] && continue
+        # The same test that decides what may be bundled, which also covers the
+        # api-ms-win-* API sets: those have no file at all, the loader resolves
+        # them from the schema Windows carries.
+        is_system_dll "$imp" && continue
         missing+="  ${file#"$STAGE"/} needs $imp"$'\n'
     done < <(objdump -p "$file" 2>/dev/null | awk '/DLL Name:/{print $3}')
 }
@@ -165,7 +168,7 @@ while IFS= read -r binary; do
 done < <(find "$STAGE" -maxdepth 4 \( -name '*.dll' -o -name '*.exe' \) -type f)
 if [ -n "$missing" ]; then
     echo "package-windows: the bundle is missing dependencies:" >&2
-    printf '%s' "$missing" >&2
+    printf '%s' "$missing" | sort -u >&2
     exit 1
 fi
 
