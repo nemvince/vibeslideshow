@@ -75,7 +75,8 @@ fi
 # Named as well, for the components that are not files of their own (the api-set
 # forwarders) and for packaging runs that cannot see System32 at all.
 is_system_dll() {
-    case "$(printf '%s' "$1" | tr 'A-Z' 'a-z')" in
+    local base="${1,,}"   # no subshell: this runs for every dependency of every DLL
+    case "$base" in
         kernel32.dll|user32.dll|gdi32.dll|gdi32full.dll|shell32.dll|advapi32.dll|ole32.dll|oleaut32.dll|ws2_32.dll|mpr.dll|bcrypt.dll|bcryptprimitives.dll|dwmapi.dll|uxtheme.dll|winmm.dll|comdlg32.dll|imm32.dll|msvcrt.dll|shlwapi.dll|version.dll|d3d9.dll|d3d10.dll|d3d11.dll|d3d12.dll|d2d1.dll|dcomp.dll|d3dcompiler_47.dll|dxgi.dll|dxva2.dll|dwrite.dll|glu32.dll|opengl32.dll|gdiplus.dll|msimg32.dll|secur32.dll|crypt32.dll|ntdll.dll|rpcrt4.dll|setupapi.dll|cfgmgr32.dll|combase.dll|kernelbase.dll|apphelp.dll|authz.dll|avicap32.dll|avrt.dll|comctl32.dll|cryptbase.dll|dnsapi.dll|iphlpapi.dll|userenv.dll|powrprof.dll|psapi.dll|propsys.dll|oleacc.dll|sechost.dll|dbghelp.dll|shcore.dll|winhttp.dll|wininet.dll|urlmon.dll|wtsapi32.dll|mfplat.dll|mfreadwrite.dll|evr.dll|wmcodecdspuuid.dll|api-ms-win*|ucrtbase.dll|msvcp_win.dll) return 0 ;;
     esac
     [ -n "$SYSTEM32" ] && [ -f "$SYSTEM32/$1" ] && return 0
@@ -84,16 +85,27 @@ is_system_dll() {
 
 # ldd exits non-zero when a dependency is unresolved, which under `set -e -o pipefail`
 # would kill the script mid-loop before it can report anything.
+#
+# Parsed in bash rather than with awk, and paths split with `${x##*/}` rather than
+# basename: this runs a few thousand times over the bundle, and a fork costs a
+# millisecond or two on Windows — the first version spent 45 s of the CI job here.
 deps_of() {
-    ldd "$1" 2>/dev/null | awk '/=> \//{print $3}' || true
+    local name arrow path rest
+    while read -r name arrow path rest; do
+        [ "$arrow" = "=>" ] || continue
+        # ldd prints POSIX paths on MSYS2 and drive-letter paths elsewhere; accept
+        # whatever actually exists.
+        [ -f "$path" ] && printf '%s\n' "$path"
+    done < <(ldd "$1" 2>/dev/null || true)
 }
 
 copy_deps() {
-    local target="$1" dll
+    local target="$1" dll name
     while IFS= read -r dll; do
         [ -n "$dll" ] || continue
-        is_system_dll "$(basename "$dll")" && continue
-        [ -f "$STAGE/$(basename "$dll")" ] || cp -f "$dll" "$STAGE/"
+        name="${dll##*/}"
+        is_system_dll "$name" && continue
+        [ -f "$STAGE/$name" ] || cp -f "$dll" "$STAGE/"
     done < <(deps_of "$target")
 }
 for dll in "$MINGW_PREFIX/bin/libmpv"*.dll; do
