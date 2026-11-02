@@ -55,7 +55,10 @@ target_link_libraries(vibeslideshow PRIVATE
 )
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-    target_compile_options(vibeslideshow PRIVATE -Wall -Wextra -Wno-unused-parameter)
+    # The param/preset tables are aggregate initialisers that intentionally omit
+    # the trailing `unit` field.
+    target_compile_options(vibeslideshow PRIVATE
+        -Wall -Wextra -Wno-unused-parameter -Wno-missing-field-initializers)
 endif()
 
 # macOS: a real .app bundle, so the window gets a dock icon and a menu bar.
