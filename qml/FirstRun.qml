@@ -2,9 +2,9 @@ import QtQuick
 import QtQuick.Controls
 import Vibes 1.0
 
-// First run: the two things the app cannot work without, asked for once, in one
-// place. It closes as soon as both are there — the progress strip takes over from
-// there, and the first edit is cut without further input.
+// The two things the app cannot work without, asked for at every launch in one
+// place: a song and at least one folder. A remembered setup is already filled in,
+// so a returning user just presses Continue; changing either recuts as it goes.
 //
 // Plain Popup + Column on purpose: a Dialog with a custom contentItem gets no
 // content height from the layout and opens as an empty sliver.
@@ -21,6 +21,8 @@ Popup {
     closePolicy: Popup.CloseOnEscape
 
     readonly property bool ready: studio.songPath.length > 0 && studio.videoDirs.length > 0
+    // A restored session: say so, and let one button carry the whole thing.
+    readonly property bool remembered: studio.songPath.length > 0 || studio.videoDirs.length > 0
 
     background: Rectangle {
         color: Theme.panel
@@ -34,7 +36,7 @@ Popup {
 
         Text {
             width: col.width
-            text: "Make your first slideshow"
+            text: intro.remembered ? "Pick up where you left off" : "Make your first slideshow"
             color: Theme.ink
             font.pixelSize: 18
             font.weight: Font.DemiBold
@@ -42,8 +44,10 @@ Popup {
         Text {
             width: col.width
             wrapMode: Text.WordWrap
-            text: "Pick a song and at least one folder of clips. Then the app finds the beat, "
-                  + "scores the footage and cuts the first edit on its own — you can fix it shot by shot afterwards."
+            text: intro.remembered
+                  ? "This is what you had open last time. Change either and the app recuts as it goes."
+                  : "Pick a song and at least one folder of clips. Then the app finds the beat, "
+                    + "scores the footage and cuts the first edit on its own — you can fix it shot by shot afterwards."
             color: Theme.dim
             font.pixelSize: 12
             lineHeight: 1.3
@@ -168,7 +172,7 @@ Popup {
                     onClicked: intro.close()
                 }
                 SmallButton {
-                    text: "Start"
+                    text: intro.remembered ? "Continue" : "Start"
                     accent: true
                     enabled: intro.ready
                     // Both pickers already started the work; there is nothing left

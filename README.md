@@ -56,13 +56,13 @@ the code looks next to the binary first (and honours `VIBESLIDESHOW_TOOLS_DIR`).
 
 ## Using it
 
-1. **First start** opens one setup popup that asks for the two things the app
-   cannot work without: a song, and at least one folder of clips. Both rows take
-   you straight to the native picker and the popup comes back afterwards; once
-   both are there, **Start** gets out of the way. Everything after that is
-   automatic — the app reads the track, scores the footage and cuts the first
-   edit without another click. The popup only appears when there is nothing to
-   restore, and "Not now" is always available.
+1. **Every launch** starts with one setup popup that asks for the two things the
+   app cannot work without: a song, and at least one folder of clips. A remembered
+   song and folder are already in it, so a returning user just presses
+   **Continue**; "Not now" leaves the restored session as it was. Both rows go
+   straight to the native picker and the popup comes back afterwards. Everything
+   after that is automatic — the app reads the track, scores the footage and cuts
+   the first edit without another click.
 2. **Footage…** in the top bar lists the folders the library scans: add folders,
    remove the ones you are done with. Every video in them (`mp4`, `webm`, `mov`,
    `mkv`, `m4v`) is indexed and scored; DJI `.LRF` proxies are paired
@@ -87,11 +87,10 @@ the code looks next to the binary first (and honours `VIBESLIDESHOW_TOOLS_DIR`).
    chop, re-roll its in-point, swap its clip or delete it. Click a clip in the
    rail to drop it in at the playhead.
 
-While any pass runs, a strip under the top bar says what it is doing and how far
-it has got (phase, counts, ETA, percentage, and a travelling bar whenever there is
-no total to measure yet). It folds away to nothing when the app is idle, so it
-never shifts the layout for no reason, and the top bar keeps carrying plain
-messages. Controls that cannot be trusted mid-pass are visibly disabled rather
+While any pass runs, the top bar's message slot carries what it is doing and how
+far it has got (counts, ETA, percentage), with the progress line on the top bar's
+own bottom edge — it sweeps while no total is known, and takes no room when the
+app is idle. Controls that cannot be trusted mid-pass are visibly disabled rather
 than silently wrong: while the library is being rebuilt or the song is still
 being read, playback, the edit actions, timeline scrubbing, the rail's
 drop-in-a-clip click and the keyboard shortcuts are all off. Scoring only fills in

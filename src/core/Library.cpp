@@ -7,6 +7,7 @@
 #include <QFileInfo>
 #include <QFile>
 #include <QJsonDocument>
+#include <QJsonArray>
 #include <QJsonObject>
 #include <QProcess>
 #include <QStandardPaths>
@@ -129,50 +130,57 @@ void writeCaches(const QStringList &dirs, const QHash<QString, QVariantMap> &cac
 // One video file, probed. Returns false when it cannot be read (network hiccup,
 // unsupported container), so the caller can count it instead of dropping it
 // silently.
-bool probeClip(const QString &path, qint64 size, const QHash<QString, QString> &lrfFor, Clip *out) {
-    auto probeDuration = [](const QString &p) {
-        for (int attempt = 0; attempt < 2; attempt++) {
-            bool ok = false;
-            // A network mount answers slowly on the first touch: retry once with
-            // a longer deadline before calling the file unreadable.
-            const double d = runOut(tools::path(QStringLiteral("ffprobe")),
-                                    {QStringLiteral("-v"), QStringLiteral("error"),
-                                     QStringLiteral("-show_entries"), QStringLiteral("format=duration"),
-                                     QStringLiteral("-of"), QStringLiteral("csv=p=0"), p},
-                                    &ok, attempt == 0 ? 30000 : 60000).toDouble();
-            if (ok && std::isfinite(d) && d > 0) return d;
-        }
-        return 0.0;
-    };
+// Duration and dimensions in ONE ffprobe run. Asking twice meant opening the
+// same file twice per clip, which on a network mount is two round trips and two
+// chances to time out; the aspect-ratio filter needs the second answer, so the
+// cheap fix is to stop asking separately.
+bool probeFile(const QString &p, double *duration, int *w, int *h) {
+    for (int attempt = 0; attempt < 2; attempt++) {
+        bool ok = false;
+        // A network mount answers slowly on the first touch: retry once with a
+        // longer deadline before calling the file unreadable.
+        const QString out = runOut(tools::path(QStringLiteral("ffprobe")),
+                                   {QStringLiteral("-v"), QStringLiteral("error"),
+                                    QStringLiteral("-select_streams"), QStringLiteral("v:0"),
+                                    QStringLiteral("-show_entries"), QStringLiteral("format=duration:stream=width,height"),
+                                    QStringLiteral("-of"), QStringLiteral("json"), p},
+                                   &ok, attempt == 0 ? 30000 : 60000);
+        if (!ok) continue;
+        const QJsonObject o = QJsonDocument::fromJson(out.toUtf8()).object();
+        // ffprobe prints every value as a string in its JSON output.
+        const double d = o.value(QStringLiteral("format")).toObject()
+                          .value(QStringLiteral("duration")).toString().toDouble();
+        if (!std::isfinite(d) || d <= 0) return false;
+        const QJsonObject stream = o.value(QStringLiteral("streams")).toArray()
+                                    .first().toObject();
+        *duration = d;
+        if (w) *w = stream.value(QStringLiteral("width")).toInt();
+        if (h) *h = stream.value(QStringLiteral("height")).toInt();
+        return true;
+    }
+    return false;
+}
 
-    const double d = probeDuration(path);
-    if (d <= 0) return false;
+bool probeClip(const QString &path, qint64 size, const QHash<QString, QString> &lrfFor, Clip *out) {
+    double d = 0;
+    int w = 0, h = 0;
+    if (!probeFile(path, &d, &w, &h)) return false;
 
     Clip c;
     c.path = path;
     c.ext = extOf(path);
     c.duration = d;
     c.size = size;
+    c.w = w;
+    c.h = h;
     QString day;
     double tod = 0;
     if (stampOf(path, &day, &tod)) { c.day = day; c.tod = tod; c.hasTod = true; }
 
-    // Dimensions feed the aspect-ratio filter; absent when unreadable.
-    const QString dims = runOut(tools::path(QStringLiteral("ffprobe")),
-                                {QStringLiteral("-v"), QStringLiteral("error"),
-                                 QStringLiteral("-select_streams"), QStringLiteral("v:0"),
-                                 QStringLiteral("-show_entries"), QStringLiteral("stream=width,height"),
-                                 QStringLiteral("-of"), QStringLiteral("csv=p=0"), path}, nullptr, 30000);
-    if (!dims.isEmpty()) {
-        static const QRegularExpression dre(QStringLiteral("(\\d+)\\D+(\\d+)"));
-        const auto m = dre.match(dims);
-        if (m.hasMatch()) { c.w = m.captured(1).toInt(); c.h = m.captured(2).toInt(); }
-    }
-
     const QString lrf = lrfFor.value(stemOf(path));
     if (!lrf.isEmpty()) {
-        const double ld = probeDuration(lrf);
-        if (ld > 0) {
+        double ld = 0;
+        if (probeFile(lrf, &ld, nullptr, nullptr)) {
             c.lrf = lrf;
             c.lrfDur = ld;
             c.lrfSize = QFileInfo(lrf).size();

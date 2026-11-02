@@ -392,18 +392,19 @@ double Studio::progress() const {
 }
 
 QString Studio::progressLabel() const {
-    // Detail only: the phase title above it already says what is happening.
-    if (m_songBusy) return QStringLiteral("Reading the track and finding its beats");
+    // Self-contained: the top bar shows this instead of the last status message
+    // while a pass runs, so it has to say what the number refers to.
+    if (m_songBusy) return QStringLiteral("Listening to the song…");
     if (!m_lib || !m_lib->busy()) return {};
     if (m_lib->scoreTotal() > 0) {
         // Whole clips finish slowly on a network share; until the first one lands
         // the percentage is the only honest number.
         if (m_lib->scoreDone() > 0)
-            return QStringLiteral("%1 of %2 clips%3")
+            return QStringLiteral("Scoring %1 of %2%3")
                 .arg(m_lib->scoreDone()).arg(m_lib->scoreTotal())
                 .arg(etaSuffix(m_lib->scoreDone(), m_lib->scoreTotal()));
         const int pct = int(std::lround(m_lib->scoreFraction() * 100));
-        return QStringLiteral("%1% of the sampled frames%2")
+        return QStringLiteral("Scoring clips · %1%2")
             .arg(pct)
             .arg(etaFraction(m_lib->scoreFraction()));
     }

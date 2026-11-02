@@ -130,7 +130,8 @@ Rectangle {
                 horizontalAlignment: Text.AlignHCenter
                 wrapMode: Text.WordWrap
                 visible: clips.count === 0
-                text: studio.busy ? studio.progressLabel : "No footage yet — add a folder under Footage…"
+                // The numbers are in the top bar; this only explains the empty rail.
+                text: studio.busy ? "Looking for footage…" : "No footage yet — add a folder under Footage…"
                 color: Theme.faint
                 font.pixelSize: 12
             }

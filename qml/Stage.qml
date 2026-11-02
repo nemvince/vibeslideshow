@@ -87,7 +87,9 @@ Item {
             width: parent.width
             horizontalAlignment: Text.AlignHCenter
             wrapMode: Text.WordWrap
-            text: studio.progressLabel
+            // The numbers stay in the top bar; this only says why the workspace
+            // is not taking input.
+            text: "The workspace comes back as soon as this finishes."
             color: Theme.faint
             font.pixelSize: 12
         }

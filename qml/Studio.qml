@@ -87,10 +87,11 @@ ApplicationWindow {
 
             Rectangle { implicitWidth: 1; implicitHeight: 20; color: Theme.line; visible: studio.status.length > 0 }
 
-            // Messages only: live progress has its own strip under this bar.
+            // While a pass runs this slot carries the live progress + ETA;
+            // otherwise it carries whatever the app last said.
             Text {
-                text: studio.status
-                color: Theme.faint
+                text: studio.busy ? studio.progressLabel : studio.status
+                color: studio.busy ? Theme.dim : Theme.faint
                 font.pixelSize: 11
                 elide: Text.ElideRight
                 Layout.maximumWidth: 300
@@ -118,25 +119,19 @@ ApplicationWindow {
         }
 
         Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: Theme.line }
-    }
 
-    // ---- progress --------------------------------------------------------
-    // One dedicated surface for whatever pass is running. It folds to zero height
-    // when the app is idle, so the workspace only gives up room while it is
-    // actually doing something, and the top bar keeps carrying plain messages.
-    WorkStrip {
-        id: workStrip
-        objectName: "workStrip"
-        anchors { top: topBar.bottom; left: parent.left; right: parent.right }
-        active: studio.busy
-        title: studio.phase
-        detail: studio.progressLabel
-        value: studio.progress
+        // Indexing progress rides on the top bar's own bottom edge: it appears
+        // where the eye already is, and nothing reflows when it does.
+        ProgressLine {
+            anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
+            active: studio.busy
+            value: studio.progress
+        }
     }
 
     // ---- main three-pane body --------------------------------------------
     Item {
-        anchors { top: workStrip.bottom; left: parent.left; right: parent.right; bottom: transport.top }
+        anchors { top: topBar.bottom; left: parent.left; right: parent.right; bottom: transport.top }
 
         // Left: library rail with real thumbnails and score badges.
         LibraryRail {
@@ -434,9 +429,9 @@ ApplicationWindow {
         }
     }
 
-    // First start: with no song and no folder there is nothing to show and nothing
-    // to cut, so the two things the app needs are asked for once, in one place.
-    // It never opens again on its own once either has been provided.
+    // Asked at every launch: the two things the app needs, in one place. A
+    // remembered song and folder are already filled in, so continuing is one
+    // click; "Not now" leaves the restored session exactly as it was.
     FirstRun {
         id: welcome
         objectName: "firstRun"
@@ -452,9 +447,7 @@ ApplicationWindow {
         }
     }
 
-    Component.onCompleted: {
-        if (!studio.songPath.length && studio.videoDirs.length === 0) welcome.open()
-    }
+    Component.onCompleted: welcome.open()
 
     Connections {
         target: studio
