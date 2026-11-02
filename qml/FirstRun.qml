@@ -170,6 +170,30 @@ Popup {
             }
         }
 
+        // What the app is doing while this sheet is open. A first scan starts the
+        // moment footage is imported — or at launch, for a remembered session — and
+        // a modal sheet with nothing moving in it looks like a frozen app.
+        Column {
+            width: col.width
+            spacing: 5
+            visible: studio.busy || studio.progress > 0.001
+
+            Text {
+                width: parent.width
+                text: studio.busy ? (studio.phase.length ? studio.phase : "Working") + " · " + studio.progressLabel
+                                  : studio.status
+                color: Theme.dim
+                font.pixelSize: 11
+                elide: Text.ElideRight
+            }
+            ProgressLine {
+                width: parent.width
+                height: 4
+                active: studio.busy
+                value: studio.progress
+            }
+        }
+
         Item {
             width: col.width
             height: 34

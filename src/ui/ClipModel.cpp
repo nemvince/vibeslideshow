@@ -12,9 +12,20 @@
 #include <QRunnable>
 #include <QCoreApplication>
 #include <cmath>
+#ifdef Q_OS_UNIX
+#  include <unistd.h>
+#endif
+#ifdef Q_OS_WIN
+#  include <qt_windows.h>
+#endif
 
-// Thumbnail extraction runs on the pool: one ffmpeg call per clip, cached in the
-// user's cache dir keyed by clip id + mtime so a rescan is free.
+// Thumbnail extraction runs on a pool of its own: one ffmpeg call per clip,
+// cached in the user's cache dir keyed by clip id + size so a rescan is free.
+//
+// The pool is small and its children are deprioritised on purpose. A first scan
+// already runs one ffprobe per clip and then a dozen ffmpeg calls per clip for the
+// scores; adding a thumbnail encoder per visible row on top of that is what made
+// the window stop answering on a small machine.
 class ThumbJob : public QRunnable {
 public:
     ThumbJob(const QString &src, double seek, const QString &dest, const QString &key, ThumbJobs *owner);
@@ -30,6 +41,13 @@ private:
 class ThumbJobs : public QObject {
     Q_OBJECT
 public:
+    ThumbJobs() {
+        // Leave the machine something to draw with, and never more encoders than
+        // the footage is worth.
+        m_pool.setMaxThreadCount(std::max(1, std::min(2, QThread::idealThreadCount() / 2)));
+    }
+    QThreadPool *pool() { return &m_pool; }
+
     QString cacheDir() const {
         static const QString d = QStandardPaths::writableLocation(QStandardPaths::CacheLocation) + QStringLiteral("/thumbs");
         static const bool once = QDir().mkpath(d);
@@ -41,6 +59,8 @@ public:
     }
 signals:
     void done(const QString &key, const QString &path, bool ok);
+private:
+    QThreadPool m_pool;
 };
 
 ThumbJob::ThumbJob(const QString &src, double seek, const QString &dest, const QString &key, ThumbJobs *owner)
@@ -49,18 +69,33 @@ ThumbJob::ThumbJob(const QString &src, double seek, const QString &dest, const Q
 }
 
 void ThumbJob::run() {
-    QProcess p;
-    p.start(tools::path(QStringLiteral("ffmpeg")),
-            {QStringLiteral("-v"), QStringLiteral("error"), QStringLiteral("-y"),
-             QStringLiteral("-ss"), QString::number(m_seek, 'f', 2),
-             QStringLiteral("-i"), m_src,
-             QStringLiteral("-frames:v"), QStringLiteral("1"),
-             QStringLiteral("-vf"), QStringLiteral("scale=320:-2"),
-             QStringLiteral("-q:v"), QStringLiteral("4"),
-             m_dest});
-    bool ok = false;
-    if (p.waitForStarted(15000) && p.waitForFinished(30000))
-        ok = p.exitStatus() == QProcess::NormalExit && p.exitCode() == 0 && QFileInfo(m_dest).size() > 512;
+    // Everything that touches the disk happens here, on a pool thread: asking the
+    // UI thread to stat a thousand files on a network mount is a freeze, not a
+    // thumbnail.
+    bool ok = QFileInfo(m_dest).size() > 512;
+    if (!ok) {
+        QProcess p;
+        // Below the window's priority: the user is looking at the roster, not at
+        // the pictures, and the pool runs several of these at once.
+        p.setChildProcessModifier([] {
+#ifdef Q_OS_UNIX
+            ::nice(10);
+#elif defined(Q_OS_WIN)
+            SetPriorityClass(GetCurrentProcess(), BELOW_NORMAL_PRIORITY_CLASS);
+#endif
+        });
+        p.start(tools::path(QStringLiteral("ffmpeg")),
+                {QStringLiteral("-v"), QStringLiteral("error"), QStringLiteral("-y"),
+                 QStringLiteral("-ss"), QString::number(m_seek, 'f', 2),
+                 QStringLiteral("-i"), m_src,
+                 QStringLiteral("-frames:v"), QStringLiteral("1"),
+                 QStringLiteral("-vf"), QStringLiteral("scale=320:-2"),
+                 QStringLiteral("-q:v"), QStringLiteral("4"),
+                 m_dest});
+        if (p.waitForStarted(15000) && p.waitForFinished(30000))
+            ok = p.exitStatus() == QProcess::NormalExit && p.exitCode() == 0 &&
+                 QFileInfo(m_dest).size() > 512;
+    }
     ThumbJobs *owner = m_owner.data();   // null when the model went away mid-job
     if (!owner) return;
     QMetaObject::invokeMethod(owner, [owner, k = m_key, d = m_dest, ok]() { owner->finished(k, d, ok); },
@@ -181,7 +216,10 @@ void ClipModel::refresh() {
         m_visible = pass.size();
         emit visibleCountChanged();
     }
-    ensureThumbs(0, m_ids.size() - 1);
+    // Eager thumbnails for the first screenful; the rest ask for their own when
+    // the view builds them (LibraryRail's delegate). A thousand-clip folder was
+    // starting a thousand encoders the moment the scan landed.
+    ensureThumbs(0, 39);
 }
 
 QVariantList ClipModel::visibleIds() const {
@@ -192,21 +230,16 @@ QVariantList ClipModel::visibleIds() const {
 
 void ClipModel::ensureThumbs(int first, int last) {
     if (!m_lib) return;
-    QThreadPool *tp = QThreadPool::globalInstance();
     const int lo = std::max(0, first), hi = std::min(int(m_ids.size()) - 1, last);
     for (int row = lo; row <= hi; row++) {
         const Clip *c = m_lib->clipById(m_ids[row]);
         if (!c) continue;
         if (m_thumbs.contains(c->id)) continue;
-        const QFileInfo fi(c->path);
-        const QString key = QStringLiteral("%1:%2").arg(c->id).arg(fi.lastModified().toMSecsSinceEpoch());
-        const QString dest = m_jobs->cacheDir() + QStringLiteral("/%1.jpg").arg(QString(key).replace(QLatin1Char(':'), QLatin1Char('-')));
-        if (QFileInfo(dest).size() > 512) {
-            m_thumbs.insert(c->id, dest);
-            const QModelIndex ix = index(row, 0);
-            emit dataChanged(ix, ix, {ThumbRole});
-            continue;
-        }
+        // The key comes from the index, not from the file: this loop runs on the
+        // UI thread for every clip, and a stat per clip on a slow share is exactly
+        // the stall it used to be. The job stats the cache file and bails out when
+        // it is already there.
+        const QString key = QStringLiteral("%1-%2").arg(c->id).arg(c->size);
         // Mid-clip still: proxies seek fastest, and the picture matches playback.
         const QString src = !c->lrf.isEmpty() ? c->lrf : c->path;
         const double dur = !c->lrfDur ? c->duration : c->lrfDur;
@@ -215,7 +248,8 @@ void ClipModel::ensureThumbs(int first, int last) {
         // slow share ends up running the same ffmpeg dozens of times.
         if (m_pendingThumbs.contains(key)) continue;
         m_pendingThumbs.insert(key);
-        tp->start(new ThumbJob(src, dur * 0.35, dest, key, m_jobs));
+        const QString dest = m_jobs->cacheDir() + QStringLiteral("/%1.jpg").arg(key);
+        m_jobs->pool()->start(new ThumbJob(src, dur * 0.35, dest, key, m_jobs));
     }
 }
 

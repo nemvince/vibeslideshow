@@ -331,6 +331,7 @@ ApplicationWindow {
         title: "Choose a song"
         nameFilters: ["Audio (*.mp3 *.flac *.wav *.m4a *.ogg *.opus)", "All files (*)"]
         onAccepted: {
+            root.reopenWelcome = false   // the scan and the analysis are the show now
             studio.loadSong(selectedFile)
             root.reopenWhichever()
         }
@@ -342,6 +343,7 @@ ApplicationWindow {
         objectName: "folderDialog"
         title: "Import a footage folder"
         onAccepted: {
+            root.reopenWelcome = false
             studio.importUrls([selectedFolder])
             root.reopenWhichever()
         }
@@ -355,6 +357,7 @@ ApplicationWindow {
         fileMode: FileDialog.OpenFiles
         nameFilters: ["Video (*.mp4 *.webm *.mov *.mkv *.m4v)", "All files (*)"]
         onAccepted: {
+            root.reopenWelcome = false
             studio.importUrls(selectedFiles)
             root.reopenWhichever()
         }
@@ -552,13 +555,20 @@ ApplicationWindow {
         function onFilesDialogRequested() { footageFilesDialog.open() }
     }
 
-    // ---- keybindings: space toggles, arrows nudge ------------------------
-    // A Shortcut fires before the focused item sees the key, so a bare Space would
-    // toggle playback while the user types a look name, a date window or an
-    // advanced value. Text entry keeps its keys.
+    // ---- keybindings -----------------------------------------------------
+    // True while a text control owns the keyboard. Every Shortcut below is off
+    // then: a Shortcut fires before the focused item sees the key, so without this
+    // typing an "s" in the bin's search would swap a shot and a space would start
+    // the show.
     readonly property bool typingText: {
         const f = root.activeFocusItem
-        return !!f && (f instanceof TextInput || f instanceof TextField || f instanceof TextArea)
+        if (!f) return false
+        if (f instanceof TextInput || f instanceof TextEdit || f instanceof TextField || f instanceof TextArea)
+            return true
+        // A control's content item holds the focus in some styles, so the field
+        // around it is what says whether this is text entry.
+        const p = f.parent
+        return !!p && (p instanceof TextField || p instanceof TextArea)
     }
 
     // What a command needs before it applies, as declared by its `needs` field.
@@ -568,6 +578,10 @@ ApplicationWindow {
         return true
     }
 
+    // The transport keys. A Shortcut is matched before the focused item sees the
+    // key, so each of these is switched off while a text field has the keyboard:
+    // Space types a space in the bin's search, the arrows move its caret, Escape
+    // clears it, and none of them reach the timeline.
     Shortcut {
         sequence: "Space"
         enabled: !root.typingText && studio.workspaceEnabled && studio.songAnalysed
@@ -586,16 +600,16 @@ ApplicationWindow {
         onActivated: studio.seek(Math.max(0, showCtl.position - 5))
     }
     Shortcut {
+        sequence: "Escape"
+        enabled: !root.typingText
+        onActivated: studio.stopShow()
+    }
+    Shortcut {
         sequence: "Ctrl+G"
         // Same rule as the button: no new edit while the library is working, and
         // none before the song has been analysed.
         onActivated: if (!studio.busy && studio.songAnalysed) studio.generate()
     }
-    Shortcut {
-        sequence: "Escape"
-        onActivated: studio.stopShow()
-    }
-
     // Clip operations. The sequence text lives in the command table; these only
     // bind it to a window shortcut. Every one of those operations no-ops without a
     // selection, so there is nothing to enable or disable here beyond typing.

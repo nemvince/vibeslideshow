@@ -14,6 +14,12 @@
 #include <QRegularExpression>
 #include <QThread>
 #include <atomic>
+#ifdef Q_OS_UNIX
+#  include <unistd.h>
+#endif
+#ifdef Q_OS_WIN
+#  include <qt_windows.h>
+#endif
 #include <cmath>
 #include <algorithm>
 #include <functional>
@@ -39,10 +45,33 @@ QString stemOf(const QString &p) {
     return (dot < 0 ? p : p.left(dot)).toLower();
 }
 
+// The scan and the scoring run dozens of these at a time. At normal priority they
+// take every core the machine has, and the window — which has to keep drawing the
+// progress it is reporting — comes last. Hand the children a lower priority so the
+// UI thread wins the races it needs to.
+void deprioritise(QProcess &p) {
+    p.setChildProcessModifier([] {
+#ifdef Q_OS_UNIX
+        ::nice(10);
+#elif defined(Q_OS_WIN)
+        SetPriorityClass(GetCurrentProcess(), BELOW_NORMAL_PRIORITY_CLASS);
+#endif
+    });
+}
+
+// How many probe/score workers to run: every core but one, capped. The point is
+// the same as deprioritise() — the interface stays answerable while the footage
+// is being read.
+int workerCount(int cap) {
+    const int cores = QThread::idealThreadCount();
+    return std::max(1, std::min(cap, cores - 1));
+}
+
 // Run a command and return its trimmed stdout; empty on failure.
 QString runOut(const QString &prog, const QStringList &args, bool *ok = nullptr, int timeoutMs = 20000) {
     QProcess p;
     p.setProcessChannelMode(QProcess::SeparateChannels);
+    deprioritise(p);
     p.start(prog, args);
     if (!p.waitForStarted(timeoutMs)) {
         if (ok) *ok = false;
@@ -402,7 +431,7 @@ Library::ScanOutcome scanSources(const QList<MediaSource> &sources, const QSet<Q
         }
     };
 
-    const int threads = std::max(1, std::min(8, QThread::idealThreadCount()));
+    const int threads = workerCount(6);
     if (threads <= 1 || files.size() <= 2) {
         work();
     } else {
@@ -455,6 +484,7 @@ bool scoreClip(const Clip &c, int *score, int *mv, double *dk, const std::functi
     for (int s = 0; s < want; s++) {
         const double t = std::round(((dur / (want + 1)) * (s + 1)) * 10.0) / 10.0;
         QProcess p;
+        deprioritise(p);
         p.start(tools::path(QStringLiteral("ffmpeg")),
                 {QStringLiteral("-v"), QStringLiteral("error"),
                  QStringLiteral("-ss"), QString::number(t, 'f', 3),
@@ -786,7 +816,7 @@ void Library::scoreClips(quint64 gen) {
             }
         };
 
-        const int threads = std::max(1, std::min(8, QThread::idealThreadCount()));
+        const int threads = workerCount(6);
         if (threads <= 1 || total <= 1) {
             work();
         } else {
