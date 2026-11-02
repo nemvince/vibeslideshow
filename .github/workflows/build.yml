@@ -42,8 +42,15 @@ jobs:
 
       - name: Smoke test (headless)
         run: |
+          set -e
           ./build/vibeslideshow --version
-          QT_QPA_PLATFORM=offscreen timeout 8 ./build/vibeslideshow || [ $? -eq 124 ]
+          # Starting the real app must survive a few seconds offscreen; the only
+          # acceptable non-zero exit is the timeout killing it.
+          set +e
+          QT_QPA_PLATFORM=offscreen timeout 8 ./build/vibeslideshow
+          code=$?
+          set -e
+          if [ "$code" -eq 124 ]; then echo "app stayed up: ok"; else exit "$code"; fi
 
       - name: Package
         run: ./scripts/package.sh --linux --no-build
@@ -68,8 +75,6 @@ jobs:
           brew install qt mpv ffmpeg dylibbundler cmake ninja
 
       - name: Build
-        env:
-          CMAKE_PREFIX_PATH: ${{ steps.brew.outputs.prefix || '' }}
         run: |
           export CMAKE_PREFIX_PATH="$(brew --prefix qt)"
           ./scripts/build.sh --release

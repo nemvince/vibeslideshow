@@ -14,8 +14,22 @@ set(CMAKE_AUTORCC ON)
 find_package(Qt6 6.5 REQUIRED COMPONENTS Quick QuickControls2 Gui)
 qt_standard_project_setup(REQUIRES 6.5)
 
-find_package(PkgConfig REQUIRED)
-pkg_check_modules(MPV REQUIRED IMPORTED_TARGET mpv)
+# libmpv: pkg-config where it exists (Linux, Homebrew), direct lookup otherwise
+# (MSYS2 and hand-built libmpv do not always install mpv.pc).
+find_package(PkgConfig QUIET)
+if(PkgConfig_FOUND)
+    pkg_check_modules(MPV QUIET IMPORTED_TARGET mpv)
+endif()
+
+if(NOT MPV_FOUND)
+    find_path(MPV_INCLUDE_DIR mpv/client.h HINTS "${MPV_ROOT}/include" "${CMAKE_PREFIX_PATH}/include")
+    find_library(MPV_LIBRARY NAMES mpv mpv-2 libmpv HINTS "${MPV_ROOT}/lib" "${MPV_ROOT}/bin" "${CMAKE_PREFIX_PATH}/lib")
+    if(NOT MPV_INCLUDE_DIR OR NOT MPV_LIBRARY)
+        message(FATAL_ERROR "libmpv not found. Install it (libmpv-dev, mpv-libs, brew install mpv), "
+                            "or configure with -DMPV_ROOT=/path/to/libmpv.")
+    endif()
+    message(STATUS "libmpv (no pkg-config): ${MPV_LIBRARY}")
+endif()
 
 qt_add_executable(vibeslideshow
     src/main.cpp
@@ -51,8 +65,14 @@ target_link_libraries(vibeslideshow PRIVATE
     Qt6::Quick
     Qt6::QuickControls2
     Qt6::Gui
-    PkgConfig::MPV
 )
+
+if(TARGET PkgConfig::MPV)
+    target_link_libraries(vibeslideshow PRIVATE PkgConfig::MPV)
+else()
+    target_include_directories(vibeslideshow PRIVATE ${MPV_INCLUDE_DIR})
+    target_link_libraries(vibeslideshow PRIVATE ${MPV_LIBRARY})
+endif()
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     # The param/preset tables are aggregate initialisers that intentionally omit

@@ -10,15 +10,25 @@ Qt 6 Quick + libmpv. Linux, macOS and Windows; developed on Linux.
 
 - Qt 6.5 or newer (Quick, QuickControls2, GUI) and a working OpenGL driver
 - libmpv 2.x (`libmpv-dev` / `mpv-libs` / `brew install mpv`)
-- `ffmpeg` and `ffprobe` on `PATH`
+- `ffmpeg` and `ffprobe` on `PATH` — packaged builds ship them next to the
+  executable instead, which is what makes a bundle work without a shell
+  environment
 - CMake 3.21+ and a C++20 compiler
 
 ## Build and run
 
 ```sh
+./scripts/build.sh            # Release, into ./build
+./build/vibeslideshow
+```
+
+`scripts/build.sh --debug` or `--dir build-ci` for variants. It is a thin wrapper
+around `cmake -S . -B <dir> -DCMAKE_BUILD_TYPE=...` + `cmake --build`, so plain
+CMake works just as well:
+
+```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j$(nproc)
-./build/vibeslideshow
 ```
 
 Install the binary, desktop entry and icon:
@@ -26,6 +36,23 @@ Install the binary, desktop entry and icon:
 ```sh
 cmake --install build --prefix ~/.local
 ```
+
+## Packaging
+
+`scripts/package.sh` builds and bundles for the host OS into `dist/`:
+
+| Platform | Produces | Needs |
+|---|---|---|
+| Linux | `vibeslideshow-<ver>-linux-<arch>.tar.gz`, plus `.deb` when `dpkg-deb` exists | Qt ≥ 6.5, libmpv, ffmpeg |
+| macOS | `vibeslideshow-<ver>-macos.zip` and `.dmg` (Qt + libmpv inside the `.app`) | `brew install qt mpv ffmpeg dylibbundler` |
+| Windows | `vibeslideshow-<ver>-windows-x86_64.zip` (Qt, libmpv, ffmpeg inside) | MSYS2 MINGW64 shell with `qt6-base qt6-declarative mpv ffmpeg` |
+
+`--no-build` packages an existing `./build`. The platform scripts are
+`scripts/package-{linux,macos,windows}.sh` and can be run directly.
+
+Both bundles put `ffmpeg`/`ffprobe` beside the executable: an app started from the
+Finder, the Start menu or a `.desktop` file never inherits the user's `PATH`, so
+the code looks next to the binary first (and honours `VIBESLIDESHOW_TOOLS_DIR`).
 
 ## Using it
 
@@ -125,4 +152,11 @@ both.
 
 ## CI
 
-`.github/workflows/build.yml` builds the app on Ubuntu with Qt 6 + libmpv.
+`.github/workflows/build.yml` builds and packages all three platforms on every
+push and pull request, and attaches the artifacts to a GitHub release when a `v*`
+tag is pushed:
+
+- **linux** — Ubuntu 24.04, Qt from `install-qt-action` (the distro still ships
+  6.4), `libmpv-dev` from apt, headless start-up smoke test, tarball + `.deb`
+- **macos** — `macos-14`, Homebrew Qt/mpv/ffmpeg, `macdeployqt` bundle, zip + dmg
+- **windows** — MSYS2 MINGW64 with Qt 6, libmpv and ffmpeg, `windeployqt` bundle, zip
