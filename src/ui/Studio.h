@@ -35,6 +35,10 @@ class Studio : public QObject {
     Q_PROPERTY(double brightness READ brightness NOTIFY analysisChanged)
     Q_PROPERTY(double loudnessDb READ loudnessDb NOTIFY analysisChanged)
     Q_PROPERTY(QString trackKey READ trackKey NOTIFY analysisChanged)
+    // Lines the preview is capped to (0 = native). Playback only: the cut is the
+    // same either way, a 4K file just cannot fill every surface at full size and
+    // still land a quarter-second shot on time.
+    Q_PROPERTY(int previewHeight READ previewHeight NOTIFY previewHeightChanged)
     Q_PROPERTY(bool busy READ busy NOTIFY busyChanged)
     Q_PROPERTY(QString status READ status NOTIFY statusChanged)
     Q_PROPERTY(int scoreDone READ scoreDone NOTIFY progressChanged)
@@ -100,6 +104,7 @@ public:
     QString lookSummary() const;
     bool hasEdit() const;
     double volume() const;
+    int previewHeight() const { return m_previewHeight; }
 
     Library *library() const { return m_lib; }
     ClipModel *clipModel() const { return m_clips; }
@@ -107,6 +112,8 @@ public:
     Show *show() const { return m_show; }
 
     void setVolume(double v);
+    // 0 (native), 1080, 720 or 540 lines. Anything else falls back to native.
+    Q_INVOKABLE void setPreviewHeight(int lines);
 
     Q_INVOKABLE void startIndexing();
     // QML pickers and drops hand over QUrl: it must be converted with
@@ -151,6 +158,7 @@ signals:
     void libraryChanged();
     void editChanged();
     void volumeChanged();
+    void previewHeightChanged();
     void folderDialogRequested();
     void filesDialogRequested();
     void songDialogRequested();
@@ -160,6 +168,7 @@ private:
     void reloadLibraryModel();
     void setStatus(const QString &s);
     void setSongBusy(bool b);
+    void applyPreviewHeight(int lines);
     void syncScheduler();
     void persist();
     // Set the named look in use. It feeds two things the QML sees — the picker's
@@ -189,6 +198,7 @@ private:
     Params m_params;
     Analysis m_analysis;
     Filters m_filters;
+    int m_previewHeight = 0;
     QString m_activePreset;
     // Name of a saved look when one is in use; empty while a preset is active.
     QString m_activeProfile;

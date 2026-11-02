@@ -1,9 +1,11 @@
 #include "player/MpvItem.h"
 
 #include <QOpenGLContext>
+#include <QQuickWindow>
 #include <QMetaObject>
 #include <QDebug>
 #include <algorithm>
+#include <cmath>
 
 namespace {
 
@@ -80,6 +82,41 @@ void MpvItem::applyOptions() {
     mpv_set_option_string(m_mpv, "video-sync", "desync");
     mpv_set_option_string(m_mpv, "hr-seek", "yes");
     mpv_set_option_string(m_mpv, "hr-seek-demuxer-offset", "0");
+}
+
+void MpvItem::updateCapPixels() {
+    const double dpr = window() ? std::max(1.0, window()->effectiveDevicePixelRatio()) : 1.0;
+    m_state->capPixels.store(m_previewHeight > 0 ? int(std::lround(m_previewHeight * dpr)) : 0);
+}
+
+void MpvItem::setPreviewHeight(int lines) {
+    m_previewHeight = std::max(0, lines);
+    // Published for the render thread, which is where framebuffers are made, and
+    // a redraw so Qt re-creates this surface's buffer at the new size.
+    updateCapPixels();
+    update();
+    if (!m_mpv) return;
+    // `min(ih,cap)` and not a flat height: a vertical 4K clip is 2160 wide and
+    // 3840 tall, so a flat cap would shrink it to a stamp. It also means a file
+    // already smaller than the cap is passed through untouched. The comma belongs
+    // to the filter expression and has to be escaped for the option parser.
+    const QByteArray chain = m_previewHeight > 0
+        ? QStringLiteral("lavfi=[scale=w=-2:h=min(ih\\,%1):flags=bilinear]").arg(m_previewHeight).toUtf8()
+        : QByteArray();
+    mpv_set_property_string(m_mpv, "vf", chain.constData());
+    char *applied = mpv_get_property_string(m_mpv, "vf");
+    m_previewFilter = applied ? QString::fromUtf8(applied) : QString();
+    if (applied) mpv_free(applied);
+}
+
+void MpvItem::itemChange(ItemChange change, const ItemChangeData &data) {
+    // The cap is in device pixels, so moving to a screen with a different ratio
+    // (or being shown at all) changes it.
+    if (change == ItemDevicePixelRatioHasChanged || change == ItemSceneChange) {
+        updateCapPixels();
+        update();
+    }
+    QQuickFramebufferObject::itemChange(change, data);
 }
 
 void MpvItem::wakeupCb(void *ctx) {
@@ -213,10 +250,18 @@ void MpvRenderer::onUpdate(void *ctx) {
     QMetaObject::invokeMethod(st->item, "pump", Qt::QueuedConnection);
 }
 
+QSize MpvItem::cappedTarget(const QSize &size, int capPixels) {
+    if (capPixels <= 0 || size.height() <= capPixels) return size;
+    const double k = double(capPixels) / double(size.height());
+    return QSize(std::max(1, int(std::lround(size.width() * k))), capPixels);
+}
+
 QOpenGLFramebufferObject *MpvRenderer::createFramebufferObject(const QSize &size) {
+    const QSize target = MpvItem::cappedTarget(size, m_state->capPixels.load());
+    m_state->fboHeight.store(target.height());
     QOpenGLFramebufferObjectFormat fmt;
     fmt.setAttachment(QOpenGLFramebufferObject::NoAttachment);
-    m_fbo = new QOpenGLFramebufferObject(size, fmt);
+    m_fbo = new QOpenGLFramebufferObject(target, fmt);
     return m_fbo;
 }
 

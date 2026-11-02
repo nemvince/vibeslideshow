@@ -95,7 +95,13 @@ the code looks next to the binary first (and honours `VIBESLIDESHOW_TOOLS_DIR`).
    | **Cuts & transitions** | how shots join, and the stutter burst at the drop |
    | **Footage** | which clips may be used: score, movement, darkness, a single day, daytime hours, skipped dates, aspect |
    | **Order** | date order or shuffled, and whether the edit is reproducible from a seed |
-   | **Playback** | whether the preview plays the low-res proxies |
+   | **Playback** | whether the preview plays the low-res proxies, and the size it plays at |
+
+   **Preview size** (in the Playback tool) caps how big a picture the preview
+   produces — full, 1080, 720 or 540 lines — and applies the moment you pick it.
+   Nothing about the cut changes; a 4K file simply costs less per cut, which is
+   what keeps quarter-second shots landing on the beat. Vertical clips are capped
+   by their long side and nothing is ever upscaled.
 
    Readouts are human: a hold is "up to 2.4 s" at the song's tempo, a transition
    is "quick dissolve · 120 ms", and the footage tool says how many of the

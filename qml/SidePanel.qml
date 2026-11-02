@@ -115,6 +115,7 @@ Rectangle {
     // ---- tools ----------------------------------------------------------
     Flickable {
         id: flick
+        objectName: "toolsScroll"
         anchors {
             top: panelHeader.bottom
             left: parent.left
@@ -568,6 +569,39 @@ Rectangle {
                     hint: "DJI cameras write a light .LRF twin next to each clip; it previews faster, a little softer."
                     checked: studio.params.useLrf === true
                     onToggled: (on) => studio.setParam("useLrf", on)
+                }
+
+                // The cut is identical at every setting: this only decides how big
+                // a picture the preview produces, so a 4K file can still land a
+                // quarter-second shot on time.
+                Text {
+                    Layout.fillWidth: true
+                    Layout.topMargin: 2
+                    text: "Preview size"
+                    color: Theme.ink
+                    font.pixelSize: 11
+                }
+                Segmented {
+                    objectName: "previewSize"
+                    Layout.fillWidth: true
+                    options: [
+                        { label: "Full", value: 0 },
+                        { label: "1080p", value: 1080 },
+                        { label: "720p", value: 720 },
+                        { label: "540p", value: 540 }
+                    ]
+                    value: studio.previewHeight
+                    onSelected: (v) => studio.setPreviewHeight(v)
+                }
+                Text {
+                    Layout.fillWidth: true
+                    text: studio.previewHeight === 0
+                          ? "Native: every frame at the file's own size."
+                          : "Scaled to " + studio.previewHeight + " lines before it reaches the screen; 4K cuts stay on time."
+                    color: Theme.faint
+                    font.pixelSize: 10
+                    lineHeight: 1.2
+                    wrapMode: Text.WordWrap
                 }
             }
 

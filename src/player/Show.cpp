@@ -47,6 +47,11 @@ Show::~Show() {
     if (m_audio) mpv_terminate_destroy(m_audio);
 }
 
+void Show::setPreviewHeight(int lines) {
+    m_previewHeight = std::max(0, lines);
+    for (MpvItem *s : m_surfs) s->setPreviewHeight(m_previewHeight);
+}
+
 void Show::attachSurfaces(const QVariantList &surfaces) {
     m_surfs.clear();
     m_holdSeg.clear();
@@ -61,6 +66,8 @@ void Show::attachSurfaces(const QVariantList &surfaces) {
     }
     m_frontIdx = m_surfs.isEmpty() ? -1 : 0;
     m_outgoingIdx = -1;
+    // The session restores before the stage exists, so the cap arrives here too.
+    for (MpvItem *s : m_surfs) s->setPreviewHeight(m_previewHeight);
     if (auto *f = frontSurface()) f->setPaused(true);
 }
 

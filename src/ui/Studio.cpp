@@ -228,6 +228,22 @@ void Studio::setVolume(double v) {
     if (m_show) m_show->setVolume(v);
 }
 
+void Studio::applyPreviewHeight(int lines) {
+    // The control offers these; anything else would be a typo in a saved session.
+    static const QList<int> allowed = {0, 540, 720, 1080};
+    if (!allowed.contains(lines)) lines = 0;
+    if (m_previewHeight == lines) return;
+    m_previewHeight = lines;
+    if (m_show) m_show->setPreviewHeight(lines);
+    emit previewHeightChanged();
+}
+
+void Studio::setPreviewHeight(int lines) {
+    const int before = m_previewHeight;
+    applyPreviewHeight(lines);
+    if (m_previewHeight != before) persist();
+}
+
 // ---- session persistence -------------------------------------------------
 
 void Studio::restoreSession() {
@@ -257,6 +273,7 @@ void Studio::restoreSession() {
             const QString path = h.toString();
             if (!path.isEmpty()) m_hidden.insert(path);
         }
+        applyPreviewHeight(o.value("previewHeight").toInt());
         const QString song = o.value("song").toString();
         if (!song.isEmpty() && QFileInfo::exists(song)) m_song = song;
         // Filters ride along so a reopened app shows the same pool.
@@ -295,6 +312,7 @@ void Studio::persist() {
     hiddenSorted.sort();
     for (const QString &h : hiddenSorted) hidden.append(h);
     o["hidden"] = hidden;
+    o["previewHeight"] = m_previewHeight;
     o["song"] = m_song;
     o["filters"] = QJsonObject::fromVariantMap(filtersToMap(m_filters));
     QFile f(configDir() + QStringLiteral("/params.json"));

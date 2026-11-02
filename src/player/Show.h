@@ -55,6 +55,9 @@ public:
     bool buffering() const { return m_buffering; }
 
     void setScheduler(Scheduler *s) { m_sched = s; }
+    // Cap the size of every surface's picture, in lines (0 = native). Applies to
+    // the surfaces already attached and to any that attach later.
+    void setPreviewHeight(int lines);
     void setLibrary(Library *l) { m_lib = l; }
 
     // QML hands over the video surfaces once they exist. The first starts on
@@ -127,6 +130,7 @@ private:
     Scheduler *m_sched = nullptr;
     Library *m_lib = nullptr;
     QList<MpvItem *> m_surfs;
+    int m_previewHeight = 0;
     // Per surface: what it holds — the segment index, the clip it was loaded from
     // and the clip time. All three are needed: an edit can keep an index while
     // swapping the clip or moving its in-point, and a stale frame is not warm.
