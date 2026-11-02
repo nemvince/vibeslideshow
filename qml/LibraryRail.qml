@@ -5,7 +5,8 @@ import Vibes 1.0
 
 // The left rail: every clip the library found, with a thumbnail and a score bar.
 // Filtered-out clips stay visible but dimmed, so a filter never silently hides
-// the library — you can always see what you excluded.
+// the library — you can always see what you excluded. The filters themselves
+// live in the settings panel on the right.
 Rectangle {
     id: rail
     color: Theme.panel
@@ -30,96 +31,19 @@ Rectangle {
             }
         }
 
-        // Filters in plain language: three real questions, not seven knobs.
+        // Measured while the library is still being scanned: a count alone says
+        // nothing about whether to wait.
         Rectangle {
             Layout.fillWidth: true
-            implicitHeight: filterCol.implicitHeight + 20
-            color: Theme.panelHi
-            radius: Theme.radius
-            border.color: Theme.line
-
-            ColumnLayout {
-                id: filterCol
-                anchors { fill: parent; margins: 10 }
-                spacing: 8
-
-                FilterRow {
-                    Layout.fillWidth: true
-                    label: "Best clips only"
-                    checked: studio.filters.scoreOn === true
-                    onToggled: studio.setFilter("scoreOn", checked)
-                }
-                FilterRow {
-                    Layout.fillWidth: true
-                    label: "Keep the frame moving"
-                    checked: studio.filters.mvOn === true
-                    onToggled: studio.setFilter("mvOn", checked)
-                }
-                FilterRow {
-                    Layout.fillWidth: true
-                    label: "Skip dark clips"
-                    checked: studio.filters.junk === true
-                    onToggled: studio.setFilter("junk", checked)
-                }
-                FilterRow {
-                    Layout.fillWidth: true
-                    label: "Only one day"
-                    checked: studio.filters.dayOn === true
-                    onToggled: studio.setFilter("dayOn", checked)
-                }
-                ComboBox {
-                    visible: studio.filters.dayOn === true
-                    Layout.fillWidth: true
-                    implicitHeight: 28
-                    font.pixelSize: 11
-                    model: studio.days
-                    currentIndex: Math.max(0, studio.days.indexOf(studio.filters.day))
-                    onActivated: studio.setFilter("day", studio.days[index])
-                }
-                FilterRow {
-                    id: todRow
-                    Layout.fillWidth: true
-                    label: "Only daytime"
-                    checked: studio.filters.todOn === true
-                    onToggled: studio.setFilter("todOn", checked)
-                }
-                RowLayout {
-                    visible: studio.filters.todOn === true
-                    Layout.fillWidth: true
-                    spacing: 6
-                    Text { text: "from"; color: Theme.faint; font.pixelSize: 10 }
-                    Slider {
-                        id: fromS
-                        Layout.fillWidth: true
-                        implicitHeight: 20
-                        from: 0; to: 24; stepSize: 1
-                        // The filter is the source of truth; the handle only
-                        // overrides it while the user is dragging.
-                        Binding {
-                            target: fromS
-                            property: "value"
-                            value: studio.filters.tod.length ? studio.filters.tod[0].a : 8
-                            when: !fromS.pressed
-                            restoreMode: Binding.RestoreBindingOrValue
-                        }
-                        onMoved: studio.setFilter("todFrom", value)
-                    }
-                    Text { text: "to"; color: Theme.faint; font.pixelSize: 10 }
-                    Slider {
-                        id: toS
-                        Layout.fillWidth: true
-                        implicitHeight: 20
-                        from: 0; to: 24; stepSize: 1
-                        Binding {
-                            target: toS
-                            property: "value"
-                            value: studio.filters.tod.length ? studio.filters.tod[0].b : 19
-                            when: !toS.pressed
-                            restoreMode: Binding.RestoreBindingOrValue
-                        }
-                        onMoved: studio.setFilter("todTo", value)
-                    }
-                }
+            implicitHeight: 3
+            radius: 1.5
+            visible: studio.busy
+            color: Theme.line
+            Rectangle {
+                width: parent.width * Math.max(0, Math.min(1, studio.progress))
+                height: parent.height
+                radius: 1.5
+                color: Theme.accent
             }
         }
 
@@ -202,6 +126,17 @@ Rectangle {
                     // Click a clip to drop it into the show at the playhead.
                     onClicked: studio.newInPointAt(model.clipId, showCtl.position)
                 }
+            }
+
+            Text {
+                anchors.centerIn: parent
+                width: parent.width - 24
+                horizontalAlignment: Text.AlignHCenter
+                wrapMode: Text.WordWrap
+                visible: clips.count === 0
+                text: studio.busy ? studio.progressLabel : "No footage yet — add a folder under Footage…"
+                color: Theme.faint
+                font.pixelSize: 12
             }
         }
     }

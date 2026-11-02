@@ -41,11 +41,12 @@ cmake --install build --prefix ~/.local
 2. **Song…** loads a track. The app finds its tempo, energy curve, sections
    (chill / build / loud / drop) and any stutter it already has, then cuts the
    first edit for you.
-3. The rail on the left shows every clip with a score; the filter box answers
-   three plain questions (best clips only, keep the frame moving, skip dark
-   clips) plus day and time-of-day limits.
-4. The panel on the right holds the looks: preset cards written as prose, saved
-   looks, and an *Advanced* disclosure for the full parameter list.
+3. The rail on the left shows every clip with a score; clips the filters exclude
+   stay visible but dimmed.
+4. The panel on the right is the settings panel, in collapsible sections: **Look**
+   (one dropdown of presets plus saved looks), **Footage** (the filters — best
+   clips only, keep the frame moving, skip dark clips, one day, daytime hours),
+   **Saved looks** and **Advanced** (the full parameter list).
 5. The strip at the bottom is the edit. Select a segment to shorten, lengthen,
    chop, re-roll its in-point, swap its clip or delete it. Click a clip in the
    rail to drop it in at the playhead.

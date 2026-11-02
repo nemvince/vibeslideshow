@@ -10,5 +10,6 @@
         <file>qml/PanelBackground.qml</file>
         <file>qml/ScoreBadge.qml</file>
         <file>qml/FilterRow.qml</file>
+        <file>qml/PanelSection.qml</file>
     </qresource>
 </RCC>
