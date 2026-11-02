@@ -92,12 +92,32 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Install dependencies
+      # Qt does NOT come from Homebrew here. The `qt` formula installs the whole
+      # kit — WebEngine, WebView, 3D — which took four of the six minutes this job
+      # used to need. aqtinstall fetches only what is downloaded anyway, and that
+      # download is cached between runs (same action, same cache as Linux).
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4.5.0
+        with:
+          version: ${{ env.QT_VERSION }}
+          cache: true
+
+      # The bottles mpv and ffmpeg need, kept between runs: the pour still happens,
+      # the downloads do not. Keyed on this file, which is where the formula list
+      # lives, so a change here starts a fresh cache.
+      - name: Cache Homebrew bottles
+        uses: actions/cache@v6.1.0
+        with:
+          path: ~/Library/Caches/Homebrew
+          key: brew-${{ runner.os }}-${{ hashFiles('.github/workflows/build.yml') }}
+          restore-keys: brew-${{ runner.os }}-
+
+      - name: Install libmpv, ffmpeg and dylibbundler
         run: |
           # macos-15: homebrew has bottles for mpv from sequoia up. On macos-14 it
           # builds mpv (and a dozen dependencies) from source instead, which is
           # slow and fragile.
-          brew install qt mpv ffmpeg cmake ninja pkgconf
+          brew install mpv ffmpeg cmake ninja pkgconf
           # Optional: rewrites the ffmpeg binaries' dylib paths. The packaging
           # script only warns when it is missing, so a formula hiccup must not
           # fail the job.
@@ -105,11 +125,13 @@ jobs:
 
       - name: Build
         run: |
-          # Both prefixes: Qt comes from the qt formula, libmpv + its mpv.pc from
-          # the Homebrew prefix itself. Without the second one, pkg-config and
-          # find_path never see libmpv and configure fails.
-          export CMAKE_PREFIX_PATH="$(brew --prefix qt);$(brew --prefix)"
-          export PKG_CONFIG_PATH="$(brew --prefix)/lib/pkgconfig:$(brew --prefix qt)/lib/pkgconfig"
+          # Both prefixes, colon-separated because that is the list separator these
+          # environment variables use on macOS: Qt from aqt, libmpv + its mpv.pc
+          # from Homebrew. Without the second one, pkg-config and find_path never
+          # see libmpv and configure fails.
+          export CMAKE_PREFIX_PATH="${QT_ROOT_DIR}:$(brew --prefix)"
+          export PKG_CONFIG_PATH="$(brew --prefix)/lib/pkgconfig:${QT_ROOT_DIR}/lib/pkgconfig"
+          echo "Qt: ${QT_ROOT_DIR}"
           # pkgconf is a build-dependency of the mpv formula, so it is not installed
           # automatically; it is installed explicitly above. Informational only.
           pkgconf --modversion mpv || echo "no mpv.pc; CMake will use its direct lookup"
@@ -136,9 +158,7 @@ jobs:
           fi
 
       - name: Package
-        run: |
-          export PATH="$(brew --prefix qt)/bin:$PATH"
-          bash scripts/package.sh --macos --no-build
+        run: bash scripts/package.sh --macos --no-build
 
       - uses: actions/upload-artifact@v7
         if: failure()

@@ -136,7 +136,9 @@ for required in \
 done
 
 if command -v 7z >/dev/null 2>&1; then
-    7z a -tzip -bso0 -bsp0 "dist/$NAME.zip" "$STAGE" >/dev/null
+    # -mx1: the store is already-compressed media plus a hundred DLLs, so the
+    # default level spends most of the packaging step to save a few megabytes.
+    7z a -tzip -mx1 -bso0 -bsp0 "dist/$NAME.zip" "$STAGE" >/dev/null
 elif command -v zip >/dev/null 2>&1; then
     (cd dist && zip -qr "$NAME.zip" "$NAME")
 else

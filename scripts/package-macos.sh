@@ -49,14 +49,22 @@ done
 
 # ---- 2. Qt + third-party dylibs (libmpv included) ------------------------
 if [ -d "$APP" ]; then
-    MACDEPLOYQT="$(command -v macdeployqt || true)"
+    # The deploy tool has to be the Qt the app was built against: a macdeployqt
+    # from another Qt copies that install's frameworks into the bundle, and the
+    # app then loads the wrong ones (or none).
+    MACDEPLOYQT=""
+    if [ -n "${QT_ROOT_DIR:-}" ] && [ -x "$QT_ROOT_DIR/bin/macdeployqt" ]; then
+        MACDEPLOYQT="$QT_ROOT_DIR/bin/macdeployqt"
+    fi
+    [ -n "$MACDEPLOYQT" ] || MACDEPLOYQT="$(command -v macdeployqt || true)"
     [ -n "$MACDEPLOYQT" ] || MACDEPLOYQT="$(brew --prefix qt 2>/dev/null)/bin/macdeployqt"
-    [ -x "$MACDEPLOYQT" ] || { echo "package-macos: macdeployqt not found (brew install qt)" >&2; exit 1; }
+    [ -x "$MACDEPLOYQT" ] || { echo "package-macos: macdeployqt not found (install Qt, or brew install qt)" >&2; exit 1; }
+    echo "== macdeployqt: $MACDEPLOYQT"
     # -qmldir matters: the QML lives in a .qrc, so macdeployqt cannot discover the
     # QtQuick modules by scanning the binary.
     "$MACDEPLOYQT" "$APP" -always-overwrite -qmldir="$PWD/qml"
 else
-    echo "== no bundle: skipping macdeployqt (the build uses the Homebrew Qt)" >&2
+    echo "== no bundle: skipping macdeployqt (the build links Qt from CMAKE_PREFIX_PATH)" >&2
 fi
 
 # ---- 3. the ffmpeg binaries' own dylibs ----------------------------------
