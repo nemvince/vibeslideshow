@@ -56,12 +56,19 @@ is_system_dll() {
     return 1
 }
 
+# ldd exits non-zero when a dependency is unresolved, which under `set -e -o pipefail`
+# would kill the script mid-loop before it can report anything.
+deps_of() {
+    ldd "$1" 2>/dev/null | awk '/=> \//{print $3}' || true
+}
+
 copy_deps() {
-    local target="$1"
-    ldd "$target" 2>/dev/null | awk '/=> \//{print $3}' | while read -r dll; do
+    local target="$1" dll
+    while IFS= read -r dll; do
+        [ -n "$dll" ] || continue
         is_system_dll "$(basename "$dll")" && continue
         [ -f "$STAGE/$(basename "$dll")" ] || cp -f "$dll" "$STAGE/"
-    done
+    done < <(deps_of "$target")
 }
 for dll in "$MINGW_PREFIX/bin/libmpv"*.dll; do
     [ -f "$dll" ] || { echo "package-windows: no libmpv in $MINGW_PREFIX/bin" >&2; exit 1; }
@@ -81,16 +88,20 @@ done < <(find "$STAGE" \( -name '*.dll' -o -name '*.exe' \) | sort)
 
 # Nothing may be missing from the bundle: a bare DLL set fails at load time with
 # "plugin not found", which says nothing about the real culprit.
-missing=0
+report="$STAGE/../bundle-check.txt"
+: > "$report"
 while IFS= read -r deployed; do
-    ldd "$deployed" 2>/dev/null | awk '/=> \//{print $3}' | while read -r dep; do
+    while IFS= read -r dep; do
+        [ -n "$dep" ] || continue
         base="$(basename "$dep")"
         is_system_dll "$base" && continue
-        [ -f "$STAGE/$base" ] || echo "package-windows: bundle is missing $base (needed by $(basename "$deployed"))"
-    done
-done < <(find "$STAGE" \( -name '*.dll' -o -name '*.exe' \) | sort) | tee /tmp/bundle-check.txt
-if [ -s /tmp/bundle-check.txt ]; then
-    echo "package-windows: bundle is incomplete" >&2
+        [ -f "$STAGE/$base" ] ||
+            echo "bundle is missing $base (needed by $(basename "$deployed"))" >> "$report"
+    done < <(deps_of "$deployed")
+done < <(find "$STAGE" \( -name '*.dll' -o -name '*.exe' \) | sort)
+if [ -s "$report" ]; then
+    echo "package-windows: bundle is incomplete:" >&2
+    sort -u "$report" | sed 's/^/  /' >&2
     exit 1
 fi
 
