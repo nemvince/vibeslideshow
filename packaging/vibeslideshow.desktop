@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=vibeslideshow
+GenericName=Slideshow Editor
+Comment=Cut your own footage to a song
+Exec=vibeslideshow %f
+Icon=vibeslideshow
+Terminal=false
+Categories=AudioVideo;Video;Graphics;
+MimeType=video/mp4;video/webm;video/quicktime;video/x-matroska;audio/mpeg;audio/flac;audio/ogg;audio/x-wav;
+StartupNotify=true

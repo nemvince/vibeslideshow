@@ -1,0 +1,76 @@
+#pragma once
+#include "core/Types.h"
+#include "core/Params.h"
+#include <QObject>
+#include <QStringList>
+#include <QVariantMap>
+#include <QHash>
+
+// Scans video directories, indexes each file with ffprobe, pairs DJI .LRF
+// proxies, and computes the interest score (motion / colour / exposure /
+// variety) in the background.
+//
+// Threading: every member here is touched on the main thread only. The worker
+// threads run free functions over a snapshot of the file list and hand their
+// results back with a queued call, so the UI can never read a half-written
+// list. Each pass carries a generation number: results from a pass that a
+// newer scan superseded are dropped instead of applied.
+class Library : public QObject {
+    Q_OBJECT
+public:
+    explicit Library(QObject *parent = nullptr);
+
+    void setDirs(const QStringList &dirs) { m_dirs = dirs; }
+    QStringList dirs() const { return m_dirs; }
+    const QList<Clip> &clips() const { return m_clips; }
+
+    void startIndex();
+    // Drop everything indexed (no folders configured any more).
+    void reset();
+    bool busy() const { return m_busy; }
+    int scoreDone() const { return m_scoreDone; }
+    int scoreTotal() const { return m_scoreTotal; }
+
+    // The pool after the user's filters, in scan order.
+    QList<Clip> poolFor(const Filters &f) const;
+
+    // Rank cutoffs for the top-% filters (score at the percentile boundary).
+    int scoreCutoff(double pct) const;
+    int mvCutoff(double pct) const;
+
+    // Distinct capture days present, newest first.
+    QStringList days() const;
+
+    const Clip *clipById(int id) const;
+
+signals:
+    void indexed();
+    void scoringProgress(int done, int total);
+    void scoringFinished();
+    void failed(const QString &message);
+
+private:
+    // One scored clip, as computed off the UI thread.
+    struct Score {
+        int score = 0;
+        int mv = 0;
+        double dk = 1;
+        bool ok = false;
+    };
+
+    void applyIndex(quint64 gen, const QList<Clip> &clips);
+    void scoreClips(quint64 gen);
+    void applyScores(quint64 gen, const QList<Score> &scores);
+    void restartIfPending();
+
+    QStringList m_dirs;
+    QList<Clip> m_clips;
+    QHash<int, int> m_indexById;
+    bool m_busy = false;
+    // setDirs() + startIndex() while a pass is running: re-scan as soon as the
+    // current pass is out of the way instead of dropping the new folders.
+    bool m_restart = false;
+    int m_scoreDone = 0;
+    int m_scoreTotal = 0;
+    quint64 m_gen = 0;
+};

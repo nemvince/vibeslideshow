@@ -1,0 +1,14 @@
+<RCC>
+    <qresource prefix="/">
+        <file>qml/Studio.qml</file>
+        <file>qml/Stage.qml</file>
+        <file>qml/LibraryRail.qml</file>
+        <file>qml/SidePanel.qml</file>
+        <file>qml/Theme.qml</file>
+        <file>qml/SmallButton.qml</file>
+        <file>qml/SectionLabel.qml</file>
+        <file>qml/PanelBackground.qml</file>
+        <file>qml/ScoreBadge.qml</file>
+        <file>qml/FilterRow.qml</file>
+    </qresource>
+</RCC>

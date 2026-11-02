@@ -1,0 +1,612 @@
+#include "ui/Studio.h"
+#include "core/Library.h"
+#include "core/Scheduler.h"
+#include "core/Analyzer.h"
+#include "player/Show.h"
+#include "ui/ClipModel.h"
+#include "ui/TimelineModel.h"
+
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonArray>
+#include <QStandardPaths>
+#include <QProcess>
+#include <QThread>
+#include <QDateTime>
+#include <algorithm>
+#include <cmath>
+
+namespace {
+
+// The pool filter reaches the UI as a flat map so controls can bind to it.
+QVariantMap filtersToMap(const Filters &f) {
+    QVariantMap m;
+    m["junk"] = f.junk;
+    m["skipWindows"] = f.skipWindows;
+    m["dayOn"] = f.dayOn;
+    m["day"] = f.day;
+    m["scoreOn"] = f.scoreOn;
+    m["scoreMin"] = f.scoreMin;
+    m["mvOn"] = f.mvOn;
+    m["mvMin"] = f.mvMin;
+    m["arOn"] = f.arOn;
+    m["ar"] = f.ar;
+    m["todOn"] = f.todOn;
+    QVariantList tod;
+    for (const auto &r : f.tod) {
+        QVariantMap o;
+        o["a"] = r.a;
+        o["b"] = r.b;
+        o["wrap"] = r.wrap;
+        tod.append(o);
+    }
+    m["tod"] = tod;
+    return m;
+}
+
+// Inverse of filtersToMap: one place that knows the shape, so a filter saved in
+// params.json, a saved look and the live UI can never drift apart.
+Filters filtersFromMap(const QVariantMap &m) {
+    Filters f;
+    if (m.isEmpty()) return f;
+    f.junk = m.value("junk", true).toBool();
+    f.skipWindows = m.value("skipWindows", f.skipWindows).toString();
+    f.dayOn = m.value("dayOn", false).toBool();
+    f.day = m.value("day").toString();
+    f.scoreOn = m.value("scoreOn", false).toBool();
+    f.scoreMin = m.value("scoreMin", 0).toInt();
+    f.mvOn = m.value("mvOn", false).toBool();
+    f.mvMin = m.value("mvMin", 0).toInt();
+    f.arOn = m.value("arOn", false).toBool();
+    f.ar = m.value("ar").toDouble();
+    f.todOn = m.value("todOn", false).toBool();
+    const QVariantList tod = m.value("tod").toList();
+    for (const auto &v : tod) {
+        const QVariantMap r = v.toMap();
+        f.tod.append(todRange(r.value("a").toDouble(), r.value("b").toDouble()));
+    }
+    return f;
+}
+
+} // namespace
+
+Studio::Studio(QObject *parent) : QObject(parent) {
+    m_lib = new Library(this);
+    m_sched = std::make_unique<Scheduler>();
+    m_clips = new ClipModel(this);
+    m_timeline = new TimelineModel(this);
+    m_show = new Show(this);
+
+    m_timeline->setLibrary(m_lib);
+    m_timeline->setScheduler(m_sched.get());
+    m_timeline->setClipModel(m_clips);
+    m_show->setLibrary(m_lib);
+    m_show->setScheduler(m_sched.get());
+
+    connect(m_show, &Show::volumeChanged, this, &Studio::volumeChanged);
+
+    connect(m_lib, &Library::indexed, this, [this]() {
+        reloadLibraryModel();
+        emit libraryChanged();
+        emit filtersChanged();
+        persist();
+    });
+    connect(m_lib, &Library::scoringProgress, this, [this](int, int) { emit progressChanged(); });
+    connect(m_lib, &Library::scoringFinished, this, [this]() {
+        setBusy(false);
+        setStatus(QStringLiteral("%1 clips ready").arg(m_lib->clips().size()));
+        reloadLibraryModel();
+        emit libraryChanged();
+        emit filtersChanged();
+        syncScheduler();
+        if (m_pendingRegenerate) {
+            m_pendingRegenerate = false;
+            generate();
+        }
+    });
+    connect(m_lib, &Library::failed, this, [this](const QString &m) {
+        setBusy(false);
+        setStatus(m);
+    });
+
+    connect(m_timeline, &TimelineModel::changed, this, [this]() {
+        syncScheduler();
+        emit editChanged();
+        if (!m_timeline->hasTimeline()) return;
+        m_show->setEdit(m_timeline->segments(), m_timeline->cuts(), m_timeline->fades());
+    });
+    connect(m_timeline, &TimelineModel::countChanged, this, [this]() { emit editChanged(); });
+
+    syncScheduler();
+    refreshProfiles();
+    restoreSession();
+}
+
+Studio::~Studio() = default;
+
+QString Studio::configDir() const {
+    return QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation) + QStringLiteral("/vibeslideshow");
+}
+
+double Studio::volume() const { return m_show ? m_show->volume() : 0; }
+
+void Studio::setVolume(double v) {
+    if (m_show) m_show->setVolume(v);
+}
+
+// ---- session persistence -------------------------------------------------
+
+void Studio::restoreSession() {
+    // Params and folders are the document: restoring them is what makes the app
+    // reopen where the user left off.
+    QFile pf(configDir() + QStringLiteral("/params.json"));
+    if (pf.open(QIODevice::ReadOnly)) {
+        const QJsonObject o = QJsonDocument::fromJson(pf.readAll()).object();
+        m_params.applyMap(o.value("params").toObject().toVariantMap());
+        m_activePreset = o.value("preset").toString();
+        const QJsonArray dirs = o.value("dirs").toArray();
+        for (const auto &d : dirs) m_dirs.append(d.toString());
+        const QString song = o.value("song").toString();
+        if (!song.isEmpty() && QFileInfo::exists(song)) m_song = song;
+        // Filters ride along so a reopened app shows the same pool.
+        const QJsonObject fo = o.value("filters").toObject();
+        if (!fo.isEmpty()) applyFilters(fo.toVariantMap());
+        m_clips->setFilters(m_filters);
+        emit paramsChanged();
+        emit activePresetChanged();
+        emit filtersChanged();
+    }
+    if (!m_dirs.isEmpty()) {
+        setBusy(true);
+        setStatus(QStringLiteral("Indexing %1 folder(s)…").arg(m_dirs.size()));
+        m_lib->setDirs(m_dirs);
+        m_lib->startIndex();
+    }
+    if (!m_song.isEmpty()) loadSongFile(m_song);
+}
+
+void Studio::persist() {
+    QDir().mkpath(configDir());
+    QJsonObject o;
+    o["params"] = QJsonObject::fromVariantMap(m_params.toMap());
+    o["preset"] = m_activePreset;
+    QJsonArray dirs;
+    for (const QString &d : m_dirs) dirs.append(d);
+    o["dirs"] = dirs;
+    o["song"] = m_song;
+    o["filters"] = QJsonObject::fromVariantMap(filtersToMap(m_filters));
+    QFile f(configDir() + QStringLiteral("/params.json"));
+    if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) return;
+    f.write(QJsonDocument(o).toJson(QJsonDocument::Indented));
+}
+
+void Studio::saveNow() { persist(); }
+
+void Studio::refreshProfiles() {
+    QFile f(configDir() + QStringLiteral("/profiles.json"));
+    if (f.open(QIODevice::ReadOnly)) m_profiles = QJsonDocument::fromJson(f.readAll()).object().toVariantMap();
+    emit profilesChanged();
+}
+
+void Studio::writeProfiles() {
+    QDir().mkpath(configDir());
+    QFile f(configDir() + QStringLiteral("/profiles.json"));
+    if (f.open(QIODevice::WriteOnly | QIODevice::Truncate))
+        f.write(QJsonDocument(QJsonObject::fromVariantMap(m_profiles)).toJson(QJsonDocument::Indented));
+}
+
+QVariantList Studio::profiles() const {
+    QVariantList out;
+    QStringList names = m_profiles.keys();
+    std::sort(names.begin(), names.end());
+    for (const QString &n : names) out.append(n);
+    return out;
+}
+
+void Studio::saveProfile(const QString &name) {
+    if (name.trimmed().isEmpty()) return;
+    QVariantMap entry;
+    entry["params"] = m_params.toMap();
+    entry["preset"] = m_activePreset;
+    entry["filters"] = filtersToMap(m_filters);
+    m_profiles.insert(name.trimmed(), entry);
+    writeProfiles();
+    setStatus(QStringLiteral("Saved look “%1”").arg(name.trimmed()));
+    refreshProfiles();
+}
+
+void Studio::loadProfile(const QString &name) {
+    if (!m_profiles.contains(name)) return;
+    const QVariantMap entry = m_profiles.value(name).toMap();
+    m_params.applyMap(entry.value("params").toMap());
+    m_activePreset = entry.value("preset").toString();
+    if (!entry.value("filters").toMap().isEmpty()) applyFilters(entry.value("filters").toMap());
+    syncScheduler();
+    m_clips->setFilters(m_filters);
+    emit paramsChanged();
+    emit activePresetChanged();
+    emit filtersChanged();
+    persist();
+    setStatus(QStringLiteral("Loaded look “%1”").arg(name));
+}
+
+void Studio::deleteProfile(const QString &name) {
+    if (!m_profiles.remove(name)) return;
+    writeProfiles();
+    refreshProfiles();
+}
+
+// ---- library -------------------------------------------------------------
+
+void Studio::setStatus(const QString &s) {
+    if (m_status == s) return;
+    m_status = s;
+    emit statusChanged();
+}
+
+void Studio::setBusy(bool b) {
+    if (m_busy == b) return;
+    m_busy = b;
+    emit busyChanged();
+}
+
+int Studio::scoreDone() const { return m_lib ? m_lib->scoreDone() : 0; }
+int Studio::scoreTotal() const { return m_lib ? m_lib->scoreTotal() : 0; }
+
+void Studio::startIndexing(const QStringList &dirs) {
+    m_dirs.clear();
+    for (const QString &d : dirs) {
+        const QFileInfo fi(d);
+        if (fi.exists() && fi.isDir()) m_dirs.append(fi.absoluteFilePath());
+    }
+    emit videoDirsChanged();
+    if (m_dirs.isEmpty()) return;
+    setBusy(true);
+    setStatus(QStringLiteral("Indexing %1 folder(s)…").arg(m_dirs.size()));
+    m_lib->setDirs(m_dirs);
+    m_lib->startIndex();
+    persist();
+}
+
+void Studio::addFolder(const QUrl &url) {
+    const QString dir = url.isLocalFile() ? url.toLocalFile() : url.toString();
+    const QFileInfo fi(dir);
+    if (!fi.exists() || !fi.isDir()) {
+        setStatus(QStringLiteral("Not a folder: %1").arg(dir));
+        return;
+    }
+    if (m_dirs.contains(fi.absoluteFilePath())) {
+        // Already known: honour the click as "scan it again" instead of nothing.
+        setStatus(QStringLiteral("Rescanning %1").arg(fi.fileName()));
+        startIndexing(m_dirs);
+        return;
+    }
+    m_dirs.append(fi.absoluteFilePath());
+    emit videoDirsChanged();
+    startIndexing(m_dirs);
+}
+
+void Studio::removeFolder(const QString &dir) {
+    const QString abs = QFileInfo(dir).absoluteFilePath();
+    if (!m_dirs.removeAll(abs) && !m_dirs.removeAll(dir)) return;
+    emit videoDirsChanged();
+    if (m_dirs.isEmpty()) {
+        // No footage at all: drop the index instead of scanning nothing.
+        m_lib->setDirs(QStringList());
+        m_lib->reset();
+        m_pendingRegenerate = false;
+        setBusy(false);
+        setStatus(QStringLiteral("Add a footage folder to begin"));
+        emit libraryChanged();
+        emit filtersChanged();
+        persist();
+        return;
+    }
+    startIndexing(m_dirs);
+}
+
+void Studio::openFolderDialog() { emit folderDialogRequested(); }
+
+void Studio::openSongDialog() { emit songDialogRequested(); }
+
+void Studio::reloadLibraryModel() {
+    m_clips->setLibrary(m_lib);
+    m_clips->refresh();
+}
+
+void Studio::syncScheduler() {
+    m_sched->setParams(m_params);
+    m_sched->setAnalysis(m_analysis);
+    m_sched->reseed();
+    // The pool is the filtered set: the walk must never pick an excluded clip.
+    // Walk order (chronology, or a seeded shuffle) belongs to the scheduler.
+    m_sched->setPool(m_lib ? m_lib->poolFor(m_filters) : QList<Clip>());
+}
+
+// ---- song ---------------------------------------------------------------
+
+QString Studio::songName() const {
+    return m_song.isEmpty() ? QString() : QFileInfo(m_song).completeBaseName();
+}
+
+QString Studio::songSummary() const {
+    if (!m_analysis.valid()) return {};
+    const QString mood = m_analysis.mood;
+    const int bpm = int(std::lround(m_analysis.bpm));
+    int drops = 0;
+    for (const auto &s : m_analysis.sections)
+        if (s.kind == QLatin1String("drop")) drops++;
+    QString line = QStringLiteral("%1 bpm · %2").arg(bpm).arg(mood);
+    if (drops > 0) line += QStringLiteral(" · %1 drop%2").arg(drops).arg(drops == 1 ? QString() : QStringLiteral("s"));
+    if (!m_analysis.patAt.isEmpty()) line += QStringLiteral(" · has its own stutter");
+    return line;
+}
+
+void Studio::loadSong(const QUrl &url) {
+    const QString path = url.isLocalFile() ? url.toLocalFile() : url.toString();
+    loadSongFile(path);
+}
+
+void Studio::loadSongFile(const QString &path) {
+    if (path.isEmpty()) return;
+    if (!QFileInfo::exists(path)) {
+        setStatus(QStringLiteral("Could not open %1").arg(path));
+        return;
+    }
+    m_song = path;
+    m_analysis.clear();
+    const int gen = ++m_songGen;
+    emit songChanged();
+    emit analysisChanged();
+    setBusy(true);
+    setStatus(QStringLiteral("Listening to the song…"));
+
+    // Decoding, beat detection and the duration probe all shell out; none of it
+    // may run on the UI thread or the window freezes for the length of the song.
+    QThread *t = QThread::create([this, path, gen]() {
+        QList<float> pcm;
+        QString err;
+        const bool ok = Analyzer::decodeAudio(path, pcm, &err);
+        Analysis a = ok ? Analyzer::analyze(pcm, Analyzer::SampleRate) : Analysis();
+        double dur = 0;
+        if (ok) {
+            QProcess probe;
+            probe.start(QStringLiteral("ffprobe"),
+                        {QStringLiteral("-v"), QStringLiteral("error"), QStringLiteral("-show_entries"),
+                         QStringLiteral("format=duration"), QStringLiteral("-of"), QStringLiteral("csv=p=0"), path});
+            if (probe.waitForFinished(10000))
+                dur = QString::fromLocal8Bit(probe.readAllStandardOutput()).trimmed().toDouble();
+        }
+        QMetaObject::invokeMethod(this, [this, a, ok, err, path, dur, gen]() {
+            if (gen != m_songGen) return;   // a newer song already won
+            setBusy(false);
+            if (!ok) {
+                setStatus(QStringLiteral("Could not read %1").arg(err));
+                return;
+            }
+            m_analysis = a;
+            emit analysisChanged();
+            m_show->setSong(path);
+            m_timeline->setSongDuration(dur);
+            syncScheduler();
+            setStatus(songSummary());
+            emit editChanged();
+            persist();
+            generate();
+        }, Qt::QueuedConnection);
+    });
+    connect(t, &QThread::finished, t, &QObject::deleteLater);
+    t->start();
+}
+
+// ---- params / presets ---------------------------------------------------
+
+QVariantList Studio::presets() const {
+    QVariantList out;
+    for (const Preset &p : builtinPresets()) {
+        QVariantMap card;
+        card["name"] = p.name;
+        card["blurb"] = p.blurb;
+        card["detail"] = p.detail;
+        card["active"] = p.name == m_activePreset;
+        out.append(card);
+    }
+    return out;
+}
+
+QVariantList Studio::advanced() const {
+    QVariantList out;
+    const QVariantMap cur = m_params.toMap();
+    for (const ParamField &f : paramSchema()) {
+        QVariantMap row;
+        row["key"] = f.key;
+        row["label"] = f.label;
+        row["hint"] = f.hint;
+        row["kind"] = f.kind == ParamField::Check ? QStringLiteral("check")
+                     : f.kind == ParamField::Text ? QStringLiteral("text") : QStringLiteral("number");
+        row["min"] = f.min;
+        row["max"] = f.max;
+        row["step"] = f.step;
+        row["unit"] = f.unit;
+        row["value"] = cur.value(f.key);
+        out.append(row);
+    }
+    return out;
+}
+
+QString Studio::lookSummary() const {
+    // Plain prose, no numbers unless they are meaningful to a human.
+    QString pace;
+    if (m_params.aggro <= 0.15) pace = QStringLiteral("long, unhurried shots");
+    else if (m_params.aggro < 0.6) pace = QStringLiteral("steady shots every few beats");
+    else if (m_params.aggro < 1.15) pace = QStringLiteral("cuts that follow the beat");
+    else if (m_params.aggro < 1.75) pace = QStringLiteral("tight, driving cuts");
+    else pace = QStringLiteral("cuts on nearly every beat");
+    QString fade = m_params.fadeMs <= 0 ? QStringLiteral("hard cuts")
+                 : m_params.fadeMs <= 120 ? QStringLiteral("quick dissolves")
+                                          : QStringLiteral("soft dissolves");
+    return QStringLiteral("%1, %2").arg(pace, fade);
+}
+
+void Studio::applyPreset(const QString &name) {
+    for (const Preset &p : builtinPresets()) {
+        if (p.name != name) continue;
+        Params base;   // presets are sparse: they layer on the defaults
+        base.applyMap(p.overrides);
+        m_params = base;
+        m_activePreset = name;
+        syncScheduler();
+        emit activePresetChanged();
+        emit paramsChanged();
+        emit presetsChanged();
+        persist();
+        setStatus(QStringLiteral("Look: %1").arg(p.blurb));
+        return;
+    }
+    // A saved profile behaves like a preset in the same rail.
+    if (m_profiles.contains(name)) loadProfile(name);
+}
+
+void Studio::setParam(const QString &key, const QVariant &value) {
+    QVariantMap m = m_params.toMap();
+    m[key] = value;
+    m_params.applyMap(m);
+    // Any hand edit detaches from the named preset.
+    if (!m_activePreset.isEmpty()) {
+        m_activePreset.clear();
+        emit activePresetChanged();
+    }
+    syncScheduler();
+    emit paramsChanged();
+    emit presetsChanged();
+    persist();
+}
+
+void Studio::restoreDefaults() {
+    m_params = Params();
+    m_activePreset = QStringLiteral("Anything");
+    syncScheduler();
+    emit activePresetChanged();
+    emit paramsChanged();
+    emit presetsChanged();
+    persist();
+}
+
+// ---- filters ------------------------------------------------------------
+
+QVariantMap Studio::filters() const { return filtersToMap(m_filters); }
+QStringList Studio::days() const { return m_lib ? m_lib->days() : QStringList(); }
+int Studio::poolCount() const { return m_lib ? m_lib->poolFor(m_filters).size() : 0; }
+int Studio::libraryCount() const { return m_lib ? m_lib->clips().size() : 0; }
+bool Studio::hasEdit() const { return m_timeline->hasTimeline(); }
+
+void Studio::applyFilters(const QVariantMap &m) {
+    m_filters = filtersFromMap(m);
+}
+
+void Studio::setFilter(const QString &key, const QVariant &value) {
+    const double d = value.toDouble();
+    if (key == QLatin1String("junk")) m_filters.junk = value.toBool();
+    else if (key == QLatin1String("skipWindows")) m_filters.skipWindows = value.toString();
+    else if (key == QLatin1String("dayOn")) {
+        m_filters.dayOn = value.toBool();
+        // Picking "only one day" with nothing chosen would filter everything out.
+        if (m_filters.dayOn && m_filters.day.isEmpty()) {
+            const QStringList all = days();
+            if (!all.isEmpty()) m_filters.day = all.first();
+        }
+    } else if (key == QLatin1String("day")) m_filters.day = value.toString();
+    else if (key == QLatin1String("scoreOn")) {
+        m_filters.scoreOn = value.toBool();
+        // Top-% means the score at the rank boundary, computed over the library.
+        if (m_filters.scoreOn && m_lib) m_filters.scoreMin = m_lib->scoreCutoff(50);
+    } else if (key == QLatin1String("scorePct")) {
+        if (m_lib) m_filters.scoreMin = m_lib->scoreCutoff(d);
+    } else if (key == QLatin1String("mvOn")) {
+        m_filters.mvOn = value.toBool();
+        if (m_filters.mvOn && m_lib) m_filters.mvMin = m_lib->mvCutoff(50);
+    } else if (key == QLatin1String("mvPct")) {
+        if (m_lib) m_filters.mvMin = m_lib->mvCutoff(d);
+    } else if (key == QLatin1String("arOn")) {
+        m_filters.arOn = value.toBool();
+        if (m_filters.arOn && m_filters.ar == 0) m_filters.ar = 16.0 / 9.0;
+    } else if (key == QLatin1String("ar")) m_filters.ar = d;
+    else if (key == QLatin1String("todOn")) m_filters.todOn = value.toBool();
+    else if (key == QLatin1String("todFrom") || key == QLatin1String("todTo")) {
+        // One daylight window is what a human needs; preset windows live in Advanced.
+        double from = 8, to = 19;
+        if (!m_filters.tod.isEmpty()) { from = m_filters.tod.first().a; to = m_filters.tod.first().b; }
+        if (key == QLatin1String("todFrom")) from = d; else to = d;
+        m_filters.tod = {todRange(from, to)};
+    }
+    m_clips->setFilters(m_filters);
+    syncScheduler();
+    emit filtersChanged();
+    persist();
+}
+
+// ---- edit ---------------------------------------------------------------
+
+void Studio::generate() {
+    if (m_song.isEmpty() || !m_analysis.valid()) {
+        setStatus(m_song.isEmpty() ? QStringLiteral("Choose a song first") : QStringLiteral("Still listening…"));
+        return;
+    }
+    if (m_lib && m_lib->busy()) { m_pendingRegenerate = true; return; }
+    if (m_busy) { m_pendingRegenerate = true; return; }
+
+    syncScheduler();
+    m_clips->refresh();
+    const QList<int> pool = m_clips->passingIds();
+    if (pool.isEmpty()) {
+        setStatus(QStringLiteral("No clips pass these filters"));
+        return;
+    }
+    m_sched->reseed();
+    m_timeline->regenerate(pool);
+    if (!m_timeline->hasTimeline()) {
+        setStatus(QStringLiteral("Nothing to cut to"));
+        return;
+    }
+    m_show->setEdit(m_timeline->segments(), m_timeline->cuts(), m_timeline->fades());
+    emit editChanged();
+    setStatus(QStringLiteral("%1 cuts from %2 clips").arg(m_timeline->rowCount()).arg(pool.size()));
+}
+
+void Studio::playPause() {
+    if (!m_timeline->hasTimeline()) generate();
+    m_show->togglePlay();
+}
+
+void Studio::stopShow() { m_show->stop(); }
+void Studio::seek(double t) { m_show->seek(t); }
+void Studio::cueSegment(int index) { m_show->cueSegment(index); }
+
+void Studio::newInPointAt(int clipId, double songTime) {
+    if (clipId < 0 || !m_lib || !m_timeline->hasTimeline()) return;
+    const Clip *c = m_lib->clipById(clipId);
+    if (!c) return;
+    // Drop the clip in at the musical position the user picked: the covering
+    // segment keeps its length, the new clip starts at a fresh in-point.
+    const QList<TlSeg> &segs = m_timeline->segments();
+    int idx = 0;
+    double at = 0;
+    for (int i = 0; i < segs.size(); i++) {
+        if (at + segs[i].len > songTime) { idx = i; break; }
+        at += segs[i].len;
+        idx = i;
+    }
+    const double len = segs[idx].len;
+    const double in = m_sched->dur2seek(*c, len, m_sched->rnd());
+    m_timeline->replaceSegment(idx, c->id, in);
+    setStatus(QStringLiteral("Clip dropped at %1").arg(formatTime(songTime)));
+}
+
+QString Studio::formatTime(double t) const {
+    if (!std::isfinite(t) || t < 0) t = 0;
+    const int total = int(t);
+    return QStringLiteral("%1:%2").arg(total / 60).arg(total % 60, 2, 10, QLatin1Char('0'));
+}

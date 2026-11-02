@@ -1,0 +1,114 @@
+# vibeslideshow
+
+A native desktop editor that cuts your own footage to a song. Point it at a
+folder of clips, pick a track, pick a look in plain language — and it cuts a
+beat-synced slideshow you can fix by hand, shot by shot.
+
+Qt 6 Quick + libmpv. Linux, macOS and Windows; developed on Linux.
+
+## Requirements
+
+- Qt 6.5 or newer (Quick, QuickControls2, GUI) and a working OpenGL driver
+- libmpv 2.x (`libmpv-dev` / `mpv-libs` / `brew install mpv`)
+- `ffmpeg` and `ffprobe` on `PATH`
+- CMake 3.21+ and a C++20 compiler
+
+## Build and run
+
+```sh
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j$(nproc)
+./build/vibeslideshow
+```
+
+Install the binary, desktop entry and icon:
+
+```sh
+cmake --install build --prefix ~/.local
+```
+
+## Using it
+
+1. **Footage…** in the top bar lists the folders the library scans: add folders,
+   remove the ones you are done with. Every video in them (`mp4`, `webm`, `mov`,
+   `mkv`, `m4v`) is indexed and scored, and DJI `.LRF` proxies are paired
+   automatically for fast cuts.
+2. **Song…** loads a track. The app finds its tempo, energy curve, sections
+   (chill / build / loud / drop) and any stutter it already has, then cuts the
+   first edit for you.
+3. The rail on the left shows every clip with a score; the filter box answers
+   three plain questions (best clips only, keep the frame moving, skip dark
+   clips) plus day and time-of-day limits.
+4. The panel on the right holds the looks: preset cards written as prose, saved
+   looks, and an *Advanced* disclosure for the full parameter list.
+5. The strip at the bottom is the edit. Select a segment to shorten, lengthen,
+   chop, re-roll its in-point, swap its clip or delete it. Click a clip in the
+   rail to drop it in at the playhead.
+
+Space plays and pauses, arrow keys nudge ±5 s, `Ctrl+G` regenerates the edit,
+`Esc` stops.
+
+## How it works
+
+```
+src/
+  core/Analyzer    ffmpeg decode + beat/energy/section analysis
+  core/Scheduler   buildCuts() + materialise() + seeded RNG
+  core/Params      the 33 parameters, presets, filter + skip-window config
+  core/Library     scan, ffprobe, LRF pairing, scoring, cache
+  player/MpvItem   one video surface: QQuickFramebufferObject + mpv_render_gl
+  player/Show      the edit engine: audio-master clock, preload, crossfade
+  ui/ClipModel     list model over the library, filter state, thumbnails
+  ui/TimelineModel segment list model and every edit operation
+  ui/Studio        the single QML-facing controller; persistence
+qml/               Studio (window), LibraryRail, Stage, SidePanel + widgets
+```
+
+The clock is an **audio-only third mpv instance**. A cut can never perturb the
+song timeline, because video surfaces never carry the soundtrack.
+
+Two video surfaces are kept. The incoming clip is loaded and paused on its first
+frame on the hidden surface once the previous crossfade is over, then revealed
+when the audio clock crosses the cut: a cut is a pre-decoded reveal, not a seek.
+
+Threading rule: workers (folder scan, scoring, song analysis, thumbnails) only
+ever run free functions over a snapshot and hand results back with a queued
+call. Every indexed list is owned and mutated on the GUI thread alone, and each
+pass carries a generation number so a superseded scan can never install stale
+results.
+
+## Three libmpv embedding invariants
+
+These cost real debugging time; do not "clean them up".
+
+1. **Force the OpenGL RHI** (`QQuickWindow::setGraphicsApi` before
+   `QGuiApplication`). With Vulkan the framebuffer object's content never
+   composites — the app looks like it is rendering black video.
+2. **Bind the item's own FBO explicitly** and pass `int(fbo->handle())` with the
+   FBO's device-pixel size. `defaultFramebufferObject()` returns 0 here, which
+   makes mpv draw into nothing. The FBO itself is owned by Qt; never delete it.
+3. **Defer `loadfile` until the render context exists.** Loading from the QML
+   thread before `mpv_render_context_create` gives `Video: no video` and a
+   permanently black surface.
+
+`setlocale(LC_NUMERIC, "C")` must be called *after* `QGuiApplication` is
+constructed: Qt's constructor calls `setlocale(LC_ALL, "")` and would undo an
+earlier call, and mpv refuses to run under a comma-decimal locale.
+
+## Files on disk
+
+- `~/.config/vibeslideshow/params.json` — folders, song, look, filters
+- `~/.config/vibeslideshow/profiles.json` — saved looks
+- `<footage folder>/.vibeslideshow-score-cache.json` — clip scores, so a rescan
+  is free (`~/.cache/vibeslideshow/` when the folder is read-only)
+- `~/.cache/vibeslideshow/thumbs/` — rail and timeline thumbnails
+
+## License
+
+GPL-3.0-or-later. See [LICENSE](LICENSE). The app links Qt (LGPL-3.0) and
+libmpv (LGPL-2.1+ / GPL-2.0+ depending on the build); GPL-3.0 is compatible with
+both.
+
+## CI
+
+`.github/workflows/build.yml` builds the app on Ubuntu with Qt 6 + libmpv.

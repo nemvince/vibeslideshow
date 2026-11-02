@@ -1,2 +1,14 @@
-vibeslideshow
-node_modules/
+# Build output
+build/
+build-*/
+cmake-build-*/
+
+# Editors
+.vscode/
+.idea/
+*.user
+
+# Local junk
+*.swp
+.DS_Store
+/.vibeslideshow-score-cache.json
