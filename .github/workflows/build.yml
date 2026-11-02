@@ -241,12 +241,23 @@ jobs:
       # The build-tree smoke test above resolves Qt from MSYS2's PATH and cannot
       # notice a bundle that is missing a DLL, so run the deployed copy as well.
       # Its content is asserted by package-windows.sh; this proves it executes.
+      # `--version` returns before Qt is constructed, so it cannot notice a bundle
+      # whose DLLs shadow Windows' own: that is how 1.0.1 shipped a DWrite.dll that
+      # killed the app before its first frame while this step passed. Start the
+      # GUI from inside the bundle instead, with nothing but the bundle on PATH.
       - name: Smoke test the bundle
         run: |
           set -e
           bundle="$(echo dist/vibeslideshow-*-windows-x86_64)"
           echo "== bundle: $bundle"
           ( cd "$bundle" && QT_QPA_PLATFORM=offscreen ./vibeslideshow.exe --version )
+          set +e
+          ( cd "$bundle" && PATH="$PWD:$PATH" timeout 8 ./vibeslideshow.exe > /tmp/bundle.log 2>&1 )
+          code=$?
+          set -e
+          if [ "$code" -eq 124 ]; then echo "bundle stayed up for 8s: ok"; else
+            echo "bundle exited early (code $code)"; tail -30 /tmp/bundle.log; exit 1
+          fi
 
       - uses: actions/upload-artifact@v7
         if: failure()

@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.21)
 
 project(vibeslideshow
-    VERSION 1.0.1
+    VERSION 1.1.0
     DESCRIPTION "Beat-synced slideshow editor for your own footage"
     HOMEPAGE_URL "https://github.com/nemvince/vibeslideshow"
     LANGUAGES CXX)
