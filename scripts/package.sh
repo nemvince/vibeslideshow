@@ -31,9 +31,11 @@ if [ -z "$TARGET" ]; then
     esac
 fi
 
+# Invoke through bash: a Windows checkout has no executable bit, and macOS ships
+# bash 3.2, where "${empty[@]}" under `set -u` is an error.
 case "$TARGET" in
-    linux)   exec ./scripts/package-linux.sh "${PASSTHRU[@]}" ;;
-    macos)   exec ./scripts/package-macos.sh "${PASSTHRU[@]}" ;;
-    windows) exec ./scripts/package-windows.sh "${PASSTHRU[@]}" ;;
+    linux)   exec bash ./scripts/package-linux.sh ${PASSTHRU[@]+"${PASSTHRU[@]}"} ;;
+    macos)   exec bash ./scripts/package-macos.sh ${PASSTHRU[@]+"${PASSTHRU[@]}"} ;;
+    windows) exec bash ./scripts/package-windows.sh ${PASSTHRU[@]+"${PASSTHRU[@]}"} ;;
     *) echo "package.sh: unknown target $TARGET" >&2; exit 2 ;;
 esac

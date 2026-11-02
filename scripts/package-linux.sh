@@ -19,7 +19,7 @@ VERSION="$(sed -n 's/^ *VERSION \([0-9][0-9.]*\).*/\1/p' CMakeLists.txt | head -
 ARCH="$(uname -m)"
 NAME="vibeslideshow-$VERSION-linux-$ARCH"
 
-[ "$SKIP_BUILD" = 1 ] || ./scripts/build.sh --dir "$BUILD_DIR" --release
+[ "$SKIP_BUILD" = 1 ] || bash ./scripts/build.sh --dir "$BUILD_DIR" --release
 
 BIN="$BUILD_DIR/vibeslideshow"
 [ -x "$BIN" ] || { echo "package-linux: $BIN missing" >&2; exit 1; }

@@ -18,27 +18,46 @@ VERSION="$(sed -n 's/^ *VERSION \([0-9][0-9.]*\).*/\1/p' CMakeLists.txt | head -
 [ -n "$VERSION" ] || { echo "package-macos: cannot read VERSION from CMakeLists.txt" >&2; exit 1; }
 NAME="vibeslideshow-$VERSION-macos"
 
-[ "$SKIP_BUILD" = 1 ] || ./scripts/build.sh --dir "$BUILD_DIR" --release
+[ "$SKIP_BUILD" = 1 ] || bash ./scripts/build.sh --dir "$BUILD_DIR" --release
 
+# CMake may produce a bundle or a plain executable depending on how the target is
+# set up; handle both.
 APP="$BUILD_DIR/vibeslideshow.app"
-[ -d "$APP" ] || { echo "package-macos: $APP missing (is MACOSX_BUNDLE set?)" >&2; exit 1; }
-MACOS_DIR="$APP/Contents/MacOS"
-FRAMEWORKS="$APP/Contents/Frameworks"
+if [ -d "$APP" ]; then
+    MACOS_DIR="$APP/Contents/MacOS"
+    FRAMEWORKS="$APP/Contents/Frameworks"
+else
+    PLAIN="$BUILD_DIR/vibeslideshow"
+    [ -x "$PLAIN" ] || { echo "package-macos: neither $APP nor $PLAIN exists" >&2; exit 1; }
+    echo "== no .app bundle; packaging $PLAIN directly"
+    mkdir -p "dist/vibeslideshow-$VERSION-macos"
+    cp -f "$PLAIN" "dist/vibeslideshow-$VERSION-macos/vibeslideshow"
+    MACOS_DIR="dist/vibeslideshow-$VERSION-macos"
+    FRAMEWORKS="$MACOS_DIR/lib"
+    mkdir -p "$FRAMEWORKS"
+fi
 
 # ---- 1. ffmpeg/ffprobe next to the binary --------------------------------
 # The app shells out to them, and a bundle launched from the Finder has no PATH.
 for tool in ffmpeg ffprobe; do
     src="$(command -v "$tool" || true)"
     [ -n "$src" ] || { echo "package-macos: $tool not on PATH (brew install ffmpeg)" >&2; exit 1; }
-    cp -f "$(readlink -f "$src")" "$MACOS_DIR/$tool"
+    src_dir="$(cd "$(dirname "$src")" && pwd -P)"
+    cp -f "$src_dir/$(basename "$src")" "$MACOS_DIR/$tool"
     chmod 755 "$MACOS_DIR/$tool"
 done
 
 # ---- 2. Qt + third-party dylibs (libmpv included) ------------------------
-MACDEPLOYQT="$(command -v macdeployqt || true)"
-[ -n "$MACDEPLOYQT" ] || MACDEPLOYQT="$(brew --prefix qt 2>/dev/null)/bin/macdeployqt"
-[ -x "$MACDEPLOYQT" ] || { echo "package-macos: macdeployqt not found (brew install qt)" >&2; exit 1; }
-"$MACDEPLOYQT" "$APP" -always-overwrite -no-codesign
+if [ -d "$APP" ]; then
+    MACDEPLOYQT="$(command -v macdeployqt || true)"
+    [ -n "$MACDEPLOYQT" ] || MACDEPLOYQT="$(brew --prefix qt 2>/dev/null)/bin/macdeployqt"
+    [ -x "$MACDEPLOYQT" ] || { echo "package-macos: macdeployqt not found (brew install qt)" >&2; exit 1; }
+    # -qmldir matters: the QML lives in a .qrc, so macdeployqt cannot discover the
+    # QtQuick modules by scanning the binary.
+    "$MACDEPLOYQT" "$APP" -always-overwrite -qmldir="$PWD/qml"
+else
+    echo "== no bundle: skipping macdeployqt (the build uses the Homebrew Qt)" >&2
+fi
 
 # ---- 3. the ffmpeg binaries' own dylibs ----------------------------------
 if command -v dylibbundler >/dev/null 2>&1; then
@@ -53,13 +72,17 @@ fi
 # ---- 4. zip + dmg --------------------------------------------------------
 rm -rf "dist/$NAME" "dist/$NAME.zip" "dist/$NAME.dmg"
 mkdir -p dist
-ditto -c -k --sequesterRsrc --keepParent "$APP" "dist/$NAME.zip"
+if [ -d "$APP" ]; then
+    ditto -c -k --sequesterRsrc --keepParent "$APP" "dist/$NAME.zip"
+else
+    (cd dist && ditto -c -k --sequesterRsrc "$NAME" "$NAME.zip")
+fi
 echo "== dist/$NAME.zip"
 
 STAGE="dist/$NAME.dmg-root"
 rm -rf "$STAGE"
 mkdir -p "$STAGE"
-cp -R "$APP" "$STAGE/"
+if [ -d "$APP" ]; then cp -R "$APP" "$STAGE/"; else cp -R "dist/$NAME" "$STAGE/"; fi
 ln -s /Applications "$STAGE/Applications"
 hdiutil create -quiet -volname "vibeslideshow $VERSION" -srcfolder "$STAGE" -ov -format UDZO "dist/$NAME.dmg"
 rm -rf "$STAGE"

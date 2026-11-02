@@ -18,6 +18,17 @@
 #endif
 
 int main(int argc, char *argv[]) {
+    // Answer --version before anything else: constructing QGuiApplication needs a
+    // platform plugin, and a CI runner (or an ssh session) has no display to give
+    // it one — that aborted with SIGABRT before it could print the version.
+    for (int i = 1; i < argc; i++) {
+        const QByteArray arg(argv[i]);
+        if (arg == "--version" || arg == "-v") {
+            std::printf("vibeslideshow %s\n", VIBESLIDESHOW_VERSION);
+            return 0;
+        }
+    }
+
     // MUST happen before the app is constructed: with the Vulkan RHI the content
     // of a QQuickFramebufferObject never reaches the screen (silent black video).
     QQuickWindow::setGraphicsApi(QSGRendererInterface::OpenGL);
@@ -34,11 +45,6 @@ int main(int argc, char *argv[]) {
     QGuiApplication::setApplicationDisplayName(QStringLiteral("vibeslideshow"));
     QGuiApplication::setOrganizationName(QStringLiteral("vibeslideshow"));
 
-    const QStringList args = QCoreApplication::arguments();
-    if (args.contains(QStringLiteral("--version")) || args.contains(QStringLiteral("-v"))) {
-        std::printf("vibeslideshow %s\n", VIBESLIDESHOW_VERSION);
-        return 0;
-    }
     QQuickStyle::setStyle(QStringLiteral("Basic"));
 
     // Theme is a QML singleton, MpvItem a creatable type. Everything else the

@@ -33,27 +33,45 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             build-essential cmake ninja-build pkg-config \
-            libmpv-dev libgl1-mesa-dev libxkbcommon-dev libxkbcommon-x11-0 \
-            libxcb-cursor0 libegl1 \
+            libmpv-dev libgl1-mesa-dev libgl1-mesa-dri libxkbcommon-dev \
+            libxkbcommon-x11-0 libxcb-cursor0 libegl1 xvfb \
             ffmpeg
 
-      - name: Build
-        run: ./scripts/build.sh --release
+      - name: Environment
+        run: |
+          bash --version | head -1
+          cmake --version | head -1
+          echo "CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH:-<unset>}"
+          echo "Qt: $(command -v qmake6 || command -v qmake || echo none)"
+          pkg-config --modversion mpv
 
-      - name: Smoke test (headless)
+      - name: Optional Qt modules
+        run: pacman -S --needed --noconfirm mingw-w64-x86_64-qt6-quickcontrols2 || true
+
+      - name: Build
+        run: bash scripts/build.sh --release
+
+      - name: Smoke test
         run: |
           set -e
-          ./build/vibeslideshow --version
-          # Starting the real app must survive a few seconds offscreen; the only
-          # acceptable non-zero exit is the timeout killing it.
+          ./build/vibeslideshow --version          # must work with no display at all
+          # The window with two mpv surfaces needs a real GL context, so give it a
+          # display: Xvfb plus Mesa's software renderer.
           set +e
-          QT_QPA_PLATFORM=offscreen timeout 8 ./build/vibeslideshow
-          code=$?
-          set -e
-          if [ "$code" -eq 124 ]; then echo "app stayed up: ok"; else exit "$code"; fi
+          LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a -s "-screen 0 1280x800x24" \
+            ./build/vibeslideshow > /tmp/app.log 2>&1 &
+          pid=$!
+          sleep 10
+          if kill -0 "$pid" 2>/dev/null; then
+            kill "$pid"; wait "$pid" 2>/dev/null
+            echo "app stayed up for 10s: ok"
+          else
+            wait "$pid"; code=$?
+            echo "app exited early (code $code)"; tail -30 /tmp/app.log; exit 1
+          fi
 
       - name: Package
-        run: ./scripts/package.sh --linux --no-build
+        run: bash scripts/package.sh --linux --no-build
 
       - uses: actions/upload-artifact@v4
         with:
@@ -77,16 +95,29 @@ jobs:
       - name: Build
         run: |
           export CMAKE_PREFIX_PATH="$(brew --prefix qt)"
-          ./scripts/build.sh --release
+          bash scripts/build.sh --release
 
-      - name: Smoke test (headless)
+      - name: Smoke test
         run: |
-          QT_QPA_PLATFORM=offscreen ./build/vibeslideshow.app/Contents/MacOS/vibeslideshow --version
+          set -e
+          BIN="$(find build -type f -name vibeslideshow -perm -u+x | head -1)"
+          [ -n "$BIN" ] || { echo "no vibeslideshow binary in build/"; exit 1; }
+          echo "binary: $BIN"
+          "$BIN" --version
+          "$BIN" > /tmp/app.log 2>&1 &
+          pid=$!
+          sleep 10
+          if kill -0 "$pid" 2>/dev/null; then
+            kill "$pid"; echo "app stayed up for 10s: ok"
+          else
+            wait "$pid"; code=$?
+            echo "app exited early (code $code)"; tail -30 /tmp/app.log; exit 1
+          fi
 
       - name: Package
         run: |
           export PATH="$(brew --prefix qt)/bin:$PATH"
-          ./scripts/package.sh --macos --no-build
+          bash scripts/package.sh --macos --no-build
 
       - uses: actions/upload-artifact@v4
         with:
@@ -108,7 +139,6 @@ jobs:
       - uses: msys2/setup-msys2@v2
         with:
           msystem: MINGW64
-          update: true
           install: >-
             git
             mingw-w64-x86_64-toolchain
@@ -123,13 +153,24 @@ jobs:
             7zip
 
       - name: Build
-        run: ./scripts/build.sh --release
+        run: bash scripts/build.sh --release
 
       - name: Smoke test
-        run: ./build/vibeslideshow.exe --version
+        run: |
+          set -e
+          ./build/vibeslideshow.exe --version
+          ./build/vibeslideshow.exe > /tmp/app.log 2>&1 &
+          pid=$!
+          sleep 10
+          if kill -0 "$pid" 2>/dev/null; then
+            kill "$pid"; echo "app stayed up for 10s: ok"
+          else
+            wait "$pid"; code=$?
+            echo "app exited early (code $code)"; tail -30 /tmp/app.log; exit 1
+          fi
 
       - name: Package
-        run: ./scripts/package.sh --windows --no-build
+        run: bash scripts/package.sh --windows --no-build
 
       - uses: actions/upload-artifact@v4
         with:

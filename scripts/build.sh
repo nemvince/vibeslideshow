@@ -29,11 +29,16 @@ while [ $# -gt 0 ]; do
 done
 
 JOBS="$( (nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4) )"
+
+# Never fight an existing build tree: a cached generator cannot be switched, so
+# only choose one for a fresh directory.
 GENERATOR=()
-if command -v ninja >/dev/null 2>&1; then GENERATOR=(-G Ninja); fi
+if [ ! -f "$BUILD_DIR/CMakeCache.txt" ] && command -v ninja >/dev/null 2>&1; then
+    GENERATOR=(-G Ninja)
+fi
 
 echo "== configuring ($BUILD_TYPE) in $BUILD_DIR"
-cmake -S . -B "$BUILD_DIR" "${GENERATOR[@]}" -DCMAKE_BUILD_TYPE="$BUILD_TYPE"
+cmake -S . -B "$BUILD_DIR" ${GENERATOR[@]+"${GENERATOR[@]}"} -DCMAKE_BUILD_TYPE="$BUILD_TYPE"
 
 echo "== building with $JOBS jobs"
 cmake --build "$BUILD_DIR" -j "$JOBS"

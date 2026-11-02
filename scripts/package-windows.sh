@@ -20,7 +20,7 @@ VERSION="$(sed -n 's/^ *VERSION \([0-9][0-9.]*\).*/\1/p' CMakeLists.txt | head -
 NAME="vibeslideshow-$VERSION-windows-x86_64"
 MINGW_PREFIX="${MINGW_PREFIX:-/mingw64}"
 
-[ "$SKIP_BUILD" = 1 ] || ./scripts/build.sh --dir "$BUILD_DIR" --release
+[ "$SKIP_BUILD" = 1 ] || bash ./scripts/build.sh --dir "$BUILD_DIR" --release
 
 EXE="$BUILD_DIR/vibeslideshow.exe"
 [ -f "$EXE" ] || { echo "package-windows: $EXE missing" >&2; exit 1; }
