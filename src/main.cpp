@@ -1,4 +1,3 @@
-#include <QDir>
 #include <QGuiApplication>
 #include <QQuickStyle>
 #include <QQuickWindow>
@@ -7,17 +6,12 @@
 #include <QStringList>
 #include <cstdio>
 #include <clocale>
-#include <string>
 
 #include "player/MpvItem.h"
 #include "player/Show.h"
 #include "ui/ClipModel.h"
 #include "ui/TimelineModel.h"
 #include "ui/Studio.h"
-
-#ifdef Q_OS_WIN
-#include <windows.h>
-#endif
 
 #ifndef VIBESLIDESHOW_VERSION
 #define VIBESLIDESHOW_VERSION "0.0.0"
@@ -34,18 +28,6 @@ int main(int argc, char *argv[]) {
             return 0;
         }
     }
-
-#ifdef Q_OS_WIN
-    // Windows resolves the dependencies of a *dynamically* loaded DLL from that
-    // DLL's own folder and the system directories — not from the folder the exe
-    // lives in. A QML plugin in qml/QtQuick/Controls/ therefore cannot see the Qt
-    // DLLs sitting next to vibeslideshow.exe, and its load fails with the
-    // misleading "plugin qtquickcontrols2plugin not found". Naming the app folder
-    // as a search directory puts it back on the list for every later load.
-    const std::wstring appDir =
-        QDir::toNativeSeparators(QCoreApplication::applicationDirPath()).toStdWString();
-    SetDllDirectoryW(appDir.c_str());
-#endif
 
     // MUST happen before the app is constructed: with the Vulkan RHI the content
     // of a QQuickFramebufferObject never reaches the screen (silent black video).
