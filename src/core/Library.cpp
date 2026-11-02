@@ -17,9 +17,6 @@
 #ifdef Q_OS_UNIX
 #  include <unistd.h>
 #endif
-#ifdef Q_OS_WIN
-#  include <qt_windows.h>
-#endif
 #include <cmath>
 #include <algorithm>
 #include <functional>
@@ -50,13 +47,14 @@ QString stemOf(const QString &p) {
 // progress it is reporting — comes last. Hand the children a lower priority so the
 // UI thread wins the races it needs to.
 void deprioritise(QProcess &p) {
-    p.setChildProcessModifier([] {
 #ifdef Q_OS_UNIX
-        ::nice(10);
-#elif defined(Q_OS_WIN)
-        SetPriorityClass(GetCurrentProcess(), BELOW_NORMAL_PRIORITY_CLASS);
+    p.setChildProcessModifier([] { ::nice(10); });
+#else
+    // Qt can only modify a child's environment before it starts on Unix, and
+    // Windows has no creation-time priority class. The worker count below is what
+    // keeps those platforms responsive instead.
+    Q_UNUSED(p)
 #endif
-    });
 }
 
 // How many probe/score workers to run: every core but one, capped. The point is

@@ -15,9 +15,6 @@
 #ifdef Q_OS_UNIX
 #  include <unistd.h>
 #endif
-#ifdef Q_OS_WIN
-#  include <qt_windows.h>
-#endif
 
 // Thumbnail extraction runs on a pool of its own: one ffmpeg call per clip,
 // cached in the user's cache dir keyed by clip id + size so a rescan is free.
@@ -76,14 +73,11 @@ void ThumbJob::run() {
     if (!ok) {
         QProcess p;
         // Below the window's priority: the user is looking at the roster, not at
-        // the pictures, and the pool runs several of these at once.
-        p.setChildProcessModifier([] {
+        // the pictures, and the pool runs several of these at once. Unix only —
+        // Qt cannot touch a child's scheduling before it starts anywhere else.
 #ifdef Q_OS_UNIX
-            ::nice(10);
-#elif defined(Q_OS_WIN)
-            SetPriorityClass(GetCurrentProcess(), BELOW_NORMAL_PRIORITY_CLASS);
+        p.setChildProcessModifier([] { ::nice(10); });
 #endif
-        });
         p.start(tools::path(QStringLiteral("ffmpeg")),
                 {QStringLiteral("-v"), QStringLiteral("error"), QStringLiteral("-y"),
                  QStringLiteral("-ss"), QString::number(m_seek, 'f', 2),
