@@ -44,7 +44,17 @@ Item {
 
     Popup {
         id: menu
-        y: picker.height + 4
+        // Same rule as the look picker: drop down, or up when there is no room.
+        y: {
+            const win = Overlay.overlay
+            const below = picker.height + 4
+            if (win) {
+                const top = picker.mapToItem(null, 0, 0).y
+                if (top + below + implicitHeight > win.height && top - implicitHeight - 4 > 0)
+                    return -implicitHeight - 4
+            }
+            return below
+        }
         width: picker.width
         padding: 4
         implicitHeight: Math.min(list.contentHeight + 8, 320)

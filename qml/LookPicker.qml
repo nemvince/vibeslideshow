@@ -54,7 +54,19 @@ Item {
 
     Popup {
         id: menu
-        y: picker.height + 4
+        // Below the picker, unless the picker sits near the bottom of the window —
+        // the settings panel scrolls, so it can — in which case the list opens
+        // upwards instead of being clipped off the bottom edge.
+        y: {
+            const win = Overlay.overlay
+            const below = picker.height + 4
+            if (win) {
+                const top = picker.mapToItem(null, 0, 0).y
+                if (top + below + implicitHeight > win.height && top - implicitHeight - 4 > 0)
+                    return -implicitHeight - 4
+            }
+            return below
+        }
         width: picker.width
         padding: 4
         implicitHeight: Math.min(list.contentHeight + 8, 360)
@@ -111,6 +123,30 @@ Item {
                         elide: Text.ElideRight
                     }
 
+                    // Active marker when there is no delete button to sit there.
+                    Text {
+                        anchors { right: parent.right; rightMargin: 8; verticalCenter: parent.verticalCenter }
+                        visible: !row.modelData.saved && row.modelData.active
+                        text: "●"
+                        color: Theme.accent
+                        font.pixelSize: 8
+                    }
+
+                    HoverHandler { id: rowHover }
+
+                    // Picking the look. Declared BEFORE the delete button: later
+                    // siblings stack on top, so the ✕ keeps its own clicks instead of
+                    // the row swallowing them and loading the look it just deleted.
+                    MouseArea {
+                        anchors.fill: parent
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: {
+                            if (row.modelData.saved) studio.loadProfile(row.modelData.name)
+                            else studio.applyPreset(row.modelData.name)
+                            menu.close()
+                        }
+                    }
+
                     // Delete for saved looks only; presets are built in.
                     Item {
                         id: del
@@ -129,27 +165,6 @@ Item {
                             anchors.fill: parent
                             cursorShape: Qt.PointingHandCursor
                             onClicked: studio.deleteProfile(row.modelData.name)
-                        }
-                    }
-
-                    // Active marker when there is no delete button to sit there.
-                    Text {
-                        anchors { right: parent.right; rightMargin: 8; verticalCenter: parent.verticalCenter }
-                        visible: !row.modelData.saved && row.modelData.active
-                        text: "●"
-                        color: Theme.accent
-                        font.pixelSize: 8
-                    }
-
-                    HoverHandler { id: rowHover }
-                    MouseArea {
-                        anchors.fill: parent
-                        cursorShape: Qt.PointingHandCursor
-                        // Do not steal clicks from the delete button.
-                        onClicked: {
-                            if (row.modelData.saved) studio.loadProfile(row.modelData.name)
-                            else studio.applyPreset(row.modelData.name)
-                            menu.close()
                         }
                     }
                 }

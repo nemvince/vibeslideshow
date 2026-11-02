@@ -156,27 +156,43 @@ void TimelineModel::touch() {
 void TimelineModel::shorten() {
     const int k = m_sel;
     if (k < 0 || k >= m_segs.size()) return;
-    if (k == m_segs.size() - 1) m_segs[k].len = std::max(TlMin, m_segs[k].len - TlStep);
-    else {
+    // Segment lengths always sum to the song: time removed from one segment is
+    // handed to the one at the end, and the last segment hands it back to its
+    // neighbour instead of shrinking the edit off the end of the song.
+    if (k == m_segs.size() - 1) {
+        if (m_segs.size() < 2) return;
         const double d = std::min(TlStep, m_segs[k].len - TlMin);
+        if (d <= 0) return;
+        m_segs[k].len -= d;
+        m_segs[k - 1].len += d;
+    } else {
+        const double d = std::min(TlStep, m_segs[k].len - TlMin);
+        if (d <= 0) return;
         m_segs[k].len -= d;
         m_segs.last().len += d;
     }
-    const QModelIndex a = index(k, 0), b = index(m_segs.size() - 1, 0);
-    emit dataChanged(a, b, {SegLenRole, SegStartRole});
+    emit dataChanged(index(std::max(0, k - 1), 0), index(m_segs.size() - 1, 0),
+                     {SegLenRole, SegStartRole});
     touch();
 }
 
 void TimelineModel::lengthen() {
     const int k = m_sel;
     if (k < 0 || k >= m_segs.size()) return;
-    if (k == m_segs.size() - 1) m_segs[k].len += TlStep;
-    else {
+    if (k == m_segs.size() - 1) {
+        if (m_segs.size() < 2) return;
+        const double d = std::min(TlStep, m_segs[k - 1].len - TlMin);
+        if (d <= 0) return;
+        m_segs[k].len += d;
+        m_segs[k - 1].len -= d;
+    } else {
         const double d = std::min(TlStep, m_segs.last().len - TlMin);
+        if (d <= 0) return;
         m_segs[k].len += d;
         m_segs.last().len -= d;
     }
-    emit dataChanged(index(k, 0), index(m_segs.size() - 1, 0), {SegLenRole, SegStartRole});
+    emit dataChanged(index(std::max(0, k - 1), 0), index(m_segs.size() - 1, 0),
+                     {SegLenRole, SegStartRole});
     touch();
 }
 

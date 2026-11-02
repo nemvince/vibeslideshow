@@ -1,6 +1,7 @@
 #pragma once
 #include <QAbstractListModel>
 #include <QHash>
+#include <QSet>
 #include <QStringList>
 #include <QPointer>
 #include "core/Params.h"
@@ -58,5 +59,6 @@ private:
     int m_visible = 0;
     Filters m_filters;
     QHash<int, QString> m_thumbs;   // clip id -> cached thumbnail path
+    QSet<QString> m_pendingThumbs;  // cache keys with an extraction already running
     ThumbJobs *m_jobs = nullptr;
 };

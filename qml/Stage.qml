@@ -92,13 +92,15 @@ Item {
     }
 
     // Bottom-left overlay: where the show is, or which segment is selected.
+    // Nothing is on screen before the first play and after a stop (cutIndex resets
+    // to 0), so the badge would otherwise claim "cut 1 / 0".
     Rectangle {
         anchors { left: parent.left; bottom: parent.bottom; margins: 14 }
         width: info.implicitWidth + 20
         height: 28
         radius: 6
         color: "#99000000"
-        visible: showCtl.ready
+        visible: showCtl.ready && (timeline.selected >= 0 || showCtl.currentClip >= 0)
         Text {
             id: info
             anchors.centerIn: parent

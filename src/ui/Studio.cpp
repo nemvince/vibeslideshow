@@ -337,6 +337,13 @@ void Studio::loadProfile(const QString &name) {
 
 void Studio::deleteProfile(const QString &name) {
     if (!m_profiles.remove(name)) return;
+    // Deleting the look in use leaves its parameters alone, but nothing is
+    // "active" any more: the picker must not keep pointing at a name that no
+    // longer exists.
+    if (m_activeProfile == name) {
+        m_activeProfile.clear();
+        emit activePresetChanged();
+    }
     writeProfiles();
     refreshProfiles();
     emit looksChanged();
@@ -804,7 +811,14 @@ void Studio::seek(double t) { m_show->seek(t); }
 void Studio::cueSegment(int index) { m_show->cueSegment(index); }
 
 void Studio::newInPointAt(int clipId, double songTime) {
-    if (clipId < 0 || !m_lib || !m_timeline->hasTimeline()) return;
+    if (clipId < 0 || !m_lib) return;
+    // Clicking a clip is "put this shot here". With no edit yet there is nowhere
+    // to put it, so cut one first and drop the clip into that — otherwise the
+    // click is silently swallowed.
+    if (!m_timeline->hasTimeline()) {
+        generate();
+        if (!m_timeline->hasTimeline()) return;
+    }
     const Clip *c = m_lib->clipById(clipId);
     if (!c) return;
     // Drop the clip in at the musical position the user picked: the covering

@@ -6,6 +6,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QProcess>
+#include <QPointer>
 #include <QStandardPaths>
 #include <QThreadPool>
 #include <QRunnable>
@@ -21,7 +22,9 @@ public:
 private:
     QString m_src, m_dest, m_key;
     double m_seek = 0;
-    ThumbJobs *m_owner;
+    // The pool outlives the model: a job that finishes while the app is closing
+    // must not post into a deleted owner.
+    QPointer<ThumbJobs> m_owner;
 };
 
 class ThumbJobs : public QObject {
@@ -58,7 +61,9 @@ void ThumbJob::run() {
     bool ok = false;
     if (p.waitForStarted(15000) && p.waitForFinished(30000))
         ok = p.exitStatus() == QProcess::NormalExit && p.exitCode() == 0 && QFileInfo(m_dest).size() > 512;
-    QMetaObject::invokeMethod(m_owner, [o = m_owner, k = m_key, d = m_dest, ok]() { o->finished(k, d, ok); },
+    ThumbJobs *owner = m_owner.data();   // null when the model went away mid-job
+    if (!owner) return;
+    QMetaObject::invokeMethod(owner, [owner, k = m_key, d = m_dest, ok]() { owner->finished(k, d, ok); },
                               Qt::QueuedConnection);
 }
 
@@ -66,6 +71,7 @@ ClipModel::ClipModel(QObject *parent) : QAbstractListModel(parent) {
     m_jobs = new ThumbJobs;
     m_jobs->moveToThread(QCoreApplication::instance()->thread());
     connect(m_jobs, &ThumbJobs::done, this, [this](const QString &key, const QString &path, bool ok) {
+        m_pendingThumbs.remove(key);
         if (!ok) return;
         const int id = key.section(QLatin1Char(':'), 0, 0).toInt();
         m_thumbs.insert(id, path);
@@ -190,6 +196,11 @@ void ClipModel::ensureThumbs(int first, int last) {
         // Mid-clip still: proxies seek fastest, and the picture matches playback.
         const QString src = !c->lrf.isEmpty() ? c->lrf : c->path;
         const double dur = !c->lrfDur ? c->duration : c->lrfDur;
+        // Every refresh (each filter change, each rescan) walks the whole list: a
+        // thumbnail still being extracted must not be started a second time, or a
+        // slow share ends up running the same ffmpeg dozens of times.
+        if (m_pendingThumbs.contains(key)) continue;
+        m_pendingThumbs.insert(key);
         tp->start(new ThumbJob(src, dur * 0.35, dest, key, m_jobs));
     }
 }

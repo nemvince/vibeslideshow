@@ -167,41 +167,42 @@ Rectangle {
                     Layout.fillWidth: true
                     label: "Best clips only"
                     checked: studio.filters.scoreOn === true
-                    onToggled: studio.setFilter("scoreOn", checked)
+                    onToggled: (on) => studio.setFilter("scoreOn", on)
                 }
                 FilterRow {
                     Layout.fillWidth: true
                     label: "Keep the frame moving"
                     checked: studio.filters.mvOn === true
-                    onToggled: studio.setFilter("mvOn", checked)
+                    onToggled: (on) => studio.setFilter("mvOn", on)
                 }
                 FilterRow {
                     Layout.fillWidth: true
                     label: "Skip dark clips"
                     checked: studio.filters.junk === true
-                    onToggled: studio.setFilter("junk", checked)
+                    onToggled: (on) => studio.setFilter("junk", on)
                 }
                 FilterRow {
                     Layout.fillWidth: true
                     label: "Only one day"
                     checked: studio.filters.dayOn === true
-                    onToggled: studio.setFilter("dayOn", checked)
+                    onToggled: (on) => studio.setFilter("dayOn", on)
                 }
                 DayPicker {
                     Layout.fillWidth: true
                     visible: studio.filters.dayOn === true
+                    onChosen: (day) => studio.setFilter("day", day)
                 }
                 FilterRow {
                     Layout.fillWidth: true
                     label: "Only daytime"
                     checked: studio.filters.todOn === true
-                    onToggled: studio.setFilter("todOn", checked)
+                    onToggled: (on) => studio.setFilter("todOn", on)
                 }
                 FilterRow {
                     Layout.fillWidth: true
                     label: "Skip some dates"
                     checked: studio.filters.skipWindowsOn === true
-                    onToggled: studio.setFilter("skipWindowsOn", checked)
+                    onToggled: (on) => studio.setFilter("skipWindowsOn", on)
                 }
                 TextField {
                     id: skipField
@@ -293,8 +294,17 @@ Rectangle {
                                 elide: Text.ElideRight
                             }
                             ToggleSwitch {
+                                id: advSw
                                 Layout.alignment: Qt.AlignVCenter
-                                checked: studio.params[advRow.model.key] === true
+                                // A Binding element, not `checked:`: the switch has to
+                                // keep following the params after it is clicked, and a
+                                // plain binding is dropped by the first interaction.
+                                Binding {
+                                    target: advSw
+                                    property: "checked"
+                                    value: studio.params[advRow.model.key] === true
+                                    restoreMode: Binding.RestoreBindingOrValue
+                                }
                                 onToggled: studio.setParam(advRow.model.key, checked)
                             }
                         }
@@ -313,17 +323,25 @@ Rectangle {
                             Layout.fillWidth: true
                             spacing: 6
                             DarkSlider {
+                                id: advSlider
                                 Layout.fillWidth: true
                                 implicitHeight: 22
                                 from: advRow.model.min
                                 to: advRow.model.max
                                 stepSize: advRow.model.step
                                 fillColor: Theme.dim
-                                // Follows the parameter until grabbed; a single edit
-                                // does not rebuild this list, so drags survive.
-                                value: {
-                                    const v = studio.params[advRow.model.key]
-                                    return v === undefined ? advRow.model.value : v
+                                // Same rule as every other slider: the model drives the
+                                // handle except while it is being dragged, so a rebuild
+                                // mid-drag cannot snap it back.
+                                Binding {
+                                    target: advSlider
+                                    property: "value"
+                                    value: {
+                                        const v = studio.params[advRow.model.key]
+                                        return v === undefined ? advRow.model.value : v
+                                    }
+                                    when: !advSlider.pressed
+                                    restoreMode: Binding.RestoreBindingOrValue
                                 }
                                 onMoved: studio.setParam(advRow.model.key, value)
                             }

@@ -169,7 +169,7 @@ ApplicationWindow {
                     Text {
                         anchors.centerIn: parent
                         text: showCtl.playing ? "\u275A\u275A" : "\u25B6"
-                        color: showCtl.playing ? Theme.ink : Theme.ink
+                        color: Theme.ink
                         font.pixelSize: 13
                     }
                     MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: studio.playPause() }
@@ -243,6 +243,7 @@ ApplicationWindow {
 
             // The edit itself: segments, playhead and scrubbing in one surface.
             Timeline {
+                id: tl
                 Layout.fillWidth: true
                 Layout.fillHeight: true
             }
@@ -407,22 +408,36 @@ ApplicationWindow {
     }
 
     // ---- keybindings: space toggles, arrows nudge ------------------------
+    // A Shortcut fires before the focused item sees the key, so a bare Space would
+    // toggle playback while the user types a look name, a date window or an
+    // advanced value. Text entry keeps its keys.
+    readonly property bool typingText: {
+        const f = root.activeFocusItem
+        return !!f && (f instanceof TextInput || f instanceof TextField || f instanceof TextArea)
+    }
+
     Shortcut {
         sequence: "Space"
+        enabled: !root.typingText
         onActivated: studio.playPause()
     }
+    // Seeking clamps to the edit's own length: mpv reports 0 until it has opened
+    // the file, and Math.min(0, …) would send every "forward" press to the start.
     Shortcut {
         sequence: "Right"
-        onActivated: studio.seek(Math.min(showCtl.duration, showCtl.position + 5))
+        enabled: !root.typingText
+        onActivated: studio.seek(Math.min(tl.duration, showCtl.position + 5))
     }
     Shortcut {
         sequence: "Left"
+        enabled: !root.typingText
         onActivated: studio.seek(Math.max(0, showCtl.position - 5))
     }
     Shortcut {
         sequence: "Ctrl+G"
-        // Same rule as the button: no new edit while the library is working.
-        onActivated: if (!studio.busy) studio.generate()
+        // Same rule as the button: no new edit while the library is working, and
+        // none before the song has been analysed.
+        onActivated: if (!studio.busy && studio.songAnalysed) studio.generate()
     }
     Shortcut {
         sequence: "Escape"

@@ -73,15 +73,15 @@ the code looks next to the binary first (and honours `VIBESLIDESHOW_TOOLS_DIR`).
 4. The panel on the right is the settings panel, in collapsible sections: **Look**
    (the one preset manager: built-in looks, saved looks with a delete button, and
    saving under a name), **Footage** (the filters — best
-   clips only, keep the frame moving, skip dark clips, one day, daytime hours),
-   **Saved looks** and **Advanced** (a dozen controls that mean something;
+   clips only, keep the frame moving, skip dark clips, one day, daytime hours,
+   skip some dates), and **Advanced** (a dozen controls that mean something;
    thresholds and windows the presets tune stay out of the UI).
 5. The strip at the bottom is the edit. Select a segment to shorten, lengthen,
    chop, re-roll its in-point, swap its clip or delete it. Click a clip in the
    rail to drop it in at the playhead.
 
 Space plays and pauses, arrow keys nudge ±5 s, `Ctrl+G` regenerates the edit,
-`Esc` stops.
+`Esc` stops. The keys stand down while a text field has focus.
 
 ## How it works
 
