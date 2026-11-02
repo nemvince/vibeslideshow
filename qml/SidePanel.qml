@@ -56,13 +56,16 @@ Rectangle {
 
     // ---- sections -------------------------------------------------------
     Flickable {
+        id: flick
         anchors {
             top: panelHeader.bottom
             left: parent.left
             right: parent.right
             bottom: parent.bottom
             leftMargin: 16
-            rightMargin: 16
+            // Room for the scrollbar, which is placed outside this area: it must
+            // never sit on top of a control or a label.
+            rightMargin: 22
             topMargin: 4
         }
         visible: !panel.collapsed
@@ -83,7 +86,8 @@ Rectangle {
 
         ColumnLayout {
             id: body
-            width: parent.width
+            // 8 px stay clear of the scrollbar, so it never sits on a control.
+            width: parent.width - 8
             spacing: 4
 
             // ---- look ---------------------------------------------------

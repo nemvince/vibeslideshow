@@ -146,7 +146,7 @@ ApplicationWindow {
     Rectangle {
         id: transport
         anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
-        height: 150
+        height: 178
         color: Theme.panel
 
         Rectangle { anchors.top: parent.top; width: parent.width; height: 1; color: Theme.line }
@@ -266,8 +266,36 @@ ApplicationWindow {
 
                 Rectangle { Layout.preferredWidth: 1; implicitHeight: 18; color: Theme.line; Layout.leftMargin: 2; Layout.rightMargin: 2 }
 
-                SmallButton { text: "Regenerate"; onClicked: studio.generate() }
+                SmallButton {
+                    text: "Generate"
+                    enabled: !studio.busy && studio.songAnalysed
+                    onClicked: studio.generate()
+                }
                 SmallButton { text: "Stop"; flat: true; onClicked: studio.stopShow() }
+            }
+
+            // Editing toolbar: above the strip, icons only. The controls stay put
+            // and disable themselves, so the strip never jumps.
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 2
+
+                Text {
+                    text: timeline.selected >= 0 ? timeline.selectionInfo
+                                                 : (timeline.hasTimeline ? timeline.stats : "No edit yet")
+                    color: timeline.selected >= 0 ? Theme.dim : Theme.faint
+                    font.pixelSize: 11
+                    elide: Text.ElideRight
+                    Layout.fillWidth: true
+                }
+                IconButton { glyph: "\u2212"; tip: "Shorten"; enabled: timeline.selected >= 0; onClicked: timeline.shorten() }
+                IconButton { glyph: "+"; tip: "Lengthen"; enabled: timeline.selected >= 0; onClicked: timeline.lengthen() }
+                IconButton { glyph: "\u2702"; tip: "Chop in half"; enabled: timeline.selected >= 0; onClicked: timeline.chop() }
+                IconButton { glyph: "\u25CE"; tip: "New in-point"; enabled: timeline.selected >= 0; onClicked: timeline.rerollIn() }
+                IconButton { glyph: "\u21C4"; tip: "Swap clip"; enabled: timeline.selected >= 0; onClicked: timeline.swap() }
+                IconButton { glyph: "\u2715"; tip: "Delete segment"; enabled: timeline.selected >= 0; onClicked: timeline.remove() }
+                Rectangle { Layout.preferredWidth: 1; implicitHeight: 16; color: Theme.line; Layout.leftMargin: 6; Layout.rightMargin: 6 }
+                IconButton { glyph: "\u27F3"; tip: "Re-roll every in-point"; enabled: timeline.count > 0; onClicked: timeline.rerollAll() }
             }
 
             // The strip: segments with real thumbnails, selectable for editing.
@@ -367,41 +395,11 @@ ApplicationWindow {
                 Text {
                     anchors.centerIn: parent
                     visible: timeline.count === 0
-                    text: studio.busy ? "Building the pool…" : "Pick a song and a look, then Generate"
+                    text: studio.busy ? "Building the pool…" : "Pick a song and a look, then press Generate"
                     color: Theme.faint
                     font.pixelSize: 13
                 }
             }
-
-            // Editing row: the controls stay put and disable themselves, so the
-            // strip never jumps when a segment is selected.
-            RowLayout {
-                Layout.fillWidth: true
-                spacing: 8
-
-                Text {
-                    text: timeline.selected >= 0 ? timeline.selectionInfo : (timeline.hasTimeline ? "Select a segment to edit it" : "No edit yet")
-                    color: timeline.selected >= 0 ? Theme.dim : Theme.faint
-                    font.pixelSize: 11
-                    elide: Text.ElideRight
-                    Layout.fillWidth: true
-                }
-                Item { Layout.preferredWidth: 4 }
-                SmallButton { text: "Shorten"; enabled: timeline.selected >= 0; onClicked: timeline.shorten() }
-                SmallButton { text: "Lengthen"; enabled: timeline.selected >= 0; onClicked: timeline.lengthen() }
-                SmallButton { text: "Chop"; enabled: timeline.selected >= 0; onClicked: timeline.chop() }
-                SmallButton { text: "New in-point"; enabled: timeline.selected >= 0; onClicked: timeline.rerollIn() }
-                SmallButton { text: "Swap clip"; enabled: timeline.selected >= 0; onClicked: timeline.swap() }
-                SmallButton { text: "Delete"; enabled: timeline.selected >= 0; onClicked: timeline.remove() }
-                SmallButton { text: "Re-roll all"; enabled: timeline.count > 0; onClicked: timeline.rerollAll() }
-                Text {
-                    text: timeline.stats
-                    color: Theme.faint
-                    font.pixelSize: 11
-                    Layout.leftMargin: 6
-                }
-            }
-
 
         }
     }
@@ -575,7 +573,8 @@ ApplicationWindow {
     }
     Shortcut {
         sequence: "Ctrl+G"
-        onActivated: studio.generate()
+        // Same rule as the button: no new edit while the library is working.
+        onActivated: if (!studio.busy) studio.generate()
     }
     Shortcut {
         sequence: "Escape"

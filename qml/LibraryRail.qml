@@ -31,22 +31,6 @@ Rectangle {
             }
         }
 
-        // Measured while the library is still being scanned: a count alone says
-        // nothing about whether to wait.
-        Rectangle {
-            Layout.fillWidth: true
-            implicitHeight: 3
-            radius: 1.5
-            visible: studio.busy
-            color: Theme.line
-            Rectangle {
-                width: parent.width * Math.max(0, Math.min(1, studio.progress))
-                height: parent.height
-                radius: 1.5
-                color: Theme.accent
-            }
-        }
-
         // The clip list.
         ListView {
             id: list

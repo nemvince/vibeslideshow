@@ -15,5 +15,6 @@
         <file>qml/LookPicker.qml</file>
         <file>qml/DayPicker.qml</file>
         <file>qml/ProgressLine.qml</file>
+        <file>qml/IconButton.qml</file>
     </qresource>
 </RCC>
