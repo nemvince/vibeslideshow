@@ -285,8 +285,10 @@ jobs:
             echo "== native log:"; cat /tmp/bundle.log
             echo "== stderr forced + plugin debug:"
             ( cd "$bundle" && QT_FORCE_STDERR_LOGGING=1 QT_DEBUG_PLUGINS=1 timeout 8 ./vibeslideshow.exe ) 2>&1 | tail -40
-            echo "== software quick backend:"
-            ( cd "$bundle" && QT_FORCE_STDERR_LOGGING=1 QT_QUICK_BACKEND=software timeout 8 ./vibeslideshow.exe ) 2>&1 | tail -15
+            echo "== library + qml import logging:"
+            ( cd "$bundle" && QT_FORCE_STDERR_LOGGING=1 \
+                QT_LOGGING_RULES="qt.core.library=true;qt.qml.import.debug=true" \
+                timeout 8 ./vibeslideshow.exe ) 2>&1 | tail -30
             exit 1
           fi
 
