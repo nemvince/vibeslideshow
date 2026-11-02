@@ -67,14 +67,14 @@ ApplicationWindow {
                 Layout.maximumWidth: 300
                 Layout.alignment: Qt.AlignVCenter
             }
-            // The status line is always visible: "Could not open …", "Already
-            // scanning …" and "3 clips ready" are the only feedback an action has.
+            // While a pass runs this slot carries the live progress + ETA;
+            // otherwise it carries whatever the app last said.
             Text {
-                text: studio.status
-                color: Theme.faint
+                text: studio.busy ? studio.progressLabel : studio.status
+                color: studio.busy ? Theme.dim : Theme.faint
                 font.pixelSize: 12
                 elide: Text.ElideRight
-                Layout.maximumWidth: 300
+                Layout.maximumWidth: 320
                 Layout.alignment: Qt.AlignVCenter
             }
 
@@ -98,6 +98,34 @@ ApplicationWindow {
         }
 
         Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: Theme.line }
+
+        // Indexing progress: a hairline that fills while files are scanned and
+        // scored. Before the first file is probed there is no total yet, so it
+        // sweeps instead of sitting at zero, which would read as "stuck".
+        Rectangle {
+            id: progressTrack
+            anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
+            height: 3
+            visible: studio.busy
+            color: Theme.bg
+            clip: true
+
+            Rectangle {
+                id: progressFill
+                width: studio.progress > 0 ? parent.width * Math.min(1, studio.progress)
+                                           : parent.width * 0.22
+                height: parent.height
+                color: Theme.accent
+                Behavior on width { NumberAnimation { duration: 160 } }
+
+                SequentialAnimation on x {
+                    running: studio.busy && studio.progress <= 0
+                    loops: Animation.Infinite
+                    NumberAnimation { from: 0; to: Math.max(0, progressTrack.width - progressFill.width); duration: 900 }
+                    NumberAnimation { from: Math.max(0, progressTrack.width - progressFill.width); to: 0; duration: 900 }
+                }
+            }
+        }
     }
 
     // ---- main three-pane body --------------------------------------------
@@ -500,13 +528,29 @@ ApplicationWindow {
 
             Item {
                 width: footageCol.width
-                height: 32
+                height: 40
 
-                Text {
+                Column {
                     anchors { left: parent.left; verticalCenter: parent.verticalCenter }
-                    text: studio.libraryCount + " clips indexed"
-                    color: Theme.faint
-                    font.pixelSize: 11
+                    spacing: 5
+                    Text {
+                        text: studio.busy ? studio.progressLabel : studio.libraryCount + " clips indexed"
+                        color: Theme.faint
+                        font.pixelSize: 11
+                    }
+                    Rectangle {
+                        width: 160
+                        height: 3
+                        radius: 1.5
+                        visible: studio.busy
+                        color: Theme.line
+                        Rectangle {
+                            width: parent.width * Math.max(0, Math.min(1, studio.progress))
+                            height: parent.height
+                            radius: 1.5
+                            color: Theme.accent
+                        }
+                    }
                 }
                 Row {
                     anchors { right: parent.right; verticalCenter: parent.verticalCenter }

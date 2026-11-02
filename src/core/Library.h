@@ -30,6 +30,8 @@ public:
     bool busy() const { return m_busy; }
     int scoreDone() const { return m_scoreDone; }
     int scoreTotal() const { return m_scoreTotal; }
+    int scanDone() const { return m_scanDone; }
+    int scanTotal() const { return m_scanTotal; }
 
     // The pool after the user's filters, in scan order.
     QList<Clip> poolFor(const Filters &f) const;
@@ -43,10 +45,26 @@ public:
 
     const Clip *clipById(int id) const;
 
+    // One scanned file, before it becomes a Clip.
+    struct ScanFile {
+        QString path;
+        qint64 size = 0;
+    };
+
+    // What a scan pass produced.
+    struct ScanOutcome {
+        QList<Clip> clips;
+        int files = 0;     // videos found after duplicate removal
+        int skipped = 0;   // found but unreadable (network hiccup, unsupported codec)
+    };
+
 signals:
     void indexed();
     void scoringProgress(int done, int total);
     void scoringFinished();
+    // Files probed so far, out of the videos found. A scan over a network mount
+    // takes minutes; without this the window looks dead.
+    void scanProgress(int done, int total);
     void failed(const QString &message);
 
 private:
@@ -58,7 +76,7 @@ private:
         bool ok = false;
     };
 
-    void applyIndex(quint64 gen, const QList<Clip> &clips);
+    void applyIndex(quint64 gen, const ScanOutcome &outcome);
     void scoreClips(quint64 gen);
     void applyScores(quint64 gen, const QList<Score> &scores);
     void restartIfPending();
@@ -72,5 +90,7 @@ private:
     bool m_restart = false;
     int m_scoreDone = 0;
     int m_scoreTotal = 0;
+    int m_scanDone = 0;
+    int m_scanTotal = 0;
     quint64 m_gen = 0;
 };

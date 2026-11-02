@@ -11,8 +11,13 @@
 #include <QStandardPaths>
 #include <QRegularExpression>
 #include <QThread>
+#include <atomic>
 #include <cmath>
 #include <algorithm>
+#include <functional>
+#include <mutex>
+#include <thread>
+#include <vector>
 
 namespace {
 
@@ -120,79 +125,155 @@ void writeCaches(const QStringList &dirs, const QHash<QString, QVariantMap> &cac
     }
 }
 
-// Walks every configured folder and probes each video. Pure: returns the list,
-// touches no members, so it is safe to run on a worker thread.
-QList<Clip> scanDirs(const QStringList &dirs) {
-    QStringList paths;
+// One video file, probed. Returns false when it cannot be read (network hiccup,
+// unsupported container), so the caller can count it instead of dropping it
+// silently.
+bool probeClip(const QString &path, qint64 size, const QHash<QString, QString> &lrfFor, Clip *out) {
+    auto probeDuration = [](const QString &p) {
+        for (int attempt = 0; attempt < 2; attempt++) {
+            bool ok = false;
+            // A network mount answers slowly on the first touch: retry once with
+            // a longer deadline before calling the file unreadable.
+            const double d = runOut(QStringLiteral("ffprobe"),
+                                    {QStringLiteral("-v"), QStringLiteral("error"),
+                                     QStringLiteral("-show_entries"), QStringLiteral("format=duration"),
+                                     QStringLiteral("-of"), QStringLiteral("csv=p=0"), p},
+                                    &ok, attempt == 0 ? 30000 : 60000).toDouble();
+            if (ok && std::isfinite(d) && d > 0) return d;
+        }
+        return 0.0;
+    };
+
+    const double d = probeDuration(path);
+    if (d <= 0) return false;
+
+    Clip c;
+    c.path = path;
+    c.ext = extOf(path);
+    c.duration = d;
+    c.size = size;
+    QString day;
+    double tod = 0;
+    if (stampOf(path, &day, &tod)) { c.day = day; c.tod = tod; c.hasTod = true; }
+
+    // Dimensions feed the aspect-ratio filter; absent when unreadable.
+    const QString dims = runOut(QStringLiteral("ffprobe"),
+                                {QStringLiteral("-v"), QStringLiteral("error"),
+                                 QStringLiteral("-select_streams"), QStringLiteral("v:0"),
+                                 QStringLiteral("-show_entries"), QStringLiteral("stream=width,height"),
+                                 QStringLiteral("-of"), QStringLiteral("csv=p=0"), path}, nullptr, 30000);
+    if (!dims.isEmpty()) {
+        static const QRegularExpression dre(QStringLiteral("(\\d+)\\D+(\\d+)"));
+        const auto m = dre.match(dims);
+        if (m.hasMatch()) { c.w = m.captured(1).toInt(); c.h = m.captured(2).toInt(); }
+    }
+
+    const QString lrf = lrfFor.value(stemOf(path));
+    if (!lrf.isEmpty()) {
+        const double ld = probeDuration(lrf);
+        if (ld > 0) {
+            c.lrf = lrf;
+            c.lrfDur = ld;
+            c.lrfSize = QFileInfo(lrf).size();
+        }
+    }
+    *out = c;
+    return true;
+}
+
+// Walks every configured folder and probes each video. Pure: builds its own
+// list, touches no members, so it is safe to run on a worker thread.
+//
+// Two things this has to get right on a real footage drive:
+//  - `.LRF` files are DJI proxies, not clips: they are paired by stem with their
+//    `.MP4` twin and never indexed on their own.
+//  - The same clip is often copied into several date folders. A duplicate is the
+//    same file name at the same byte size; it is dropped before probing, so the
+//    edit cannot show the same shot twice by accident.
+Library::ScanOutcome scanDirs(const QStringList &dirs, const std::function<void(int, int)> &progress) {
     QHash<QString, QString> lrfFor;   // stem -> proxy path
+    QStringList candidates;
     for (const QString &dir : dirs) {
         QDirIterator it(dir, QDir::Files, QDirIterator::Subdirectories);
         while (it.hasNext()) {
             const QString path = it.next();
             const QString e = extOf(path);
             if (e == QLatin1String("lrf")) lrfFor.insert(stemOf(path), path);
-            else if (videoExts().contains(e)) paths.append(path);
+            else if (videoExts().contains(e)) candidates.append(path);
         }
     }
-    std::sort(paths.begin(), paths.end());
+    // Sort first, dedupe second: the copy that wins must be the same one every
+    // run, and it must be the earliest path — a later copy may have no .LRF twin
+    // next to it, and then the pairing is lost for no reason.
+    std::sort(candidates.begin(), candidates.end());
 
-    QList<Clip> out;
-    for (const QString &p : paths) {
-        bool ok = false;
-        const double d = runOut(QStringLiteral("ffprobe"),
-                                {QStringLiteral("-v"), QStringLiteral("error"),
-                                 QStringLiteral("-show_entries"), QStringLiteral("format=duration"),
-                                 QStringLiteral("-of"), QStringLiteral("csv=p=0"), p}, &ok).toDouble();
-        if (!ok || !std::isfinite(d) || d <= 0) continue;
-
-        Clip c;
-        c.path = p;
-        c.ext = extOf(p);
-        c.duration = d;
-        c.size = QFileInfo(p).size();
-        QString day;
-        double tod = 0;
-        if (stampOf(p, &day, &tod)) { c.day = day; c.tod = tod; c.hasTod = true; }
-
-        // Dimensions feed the aspect-ratio filter; absent when unreadable.
-        const QString dims = runOut(QStringLiteral("ffprobe"),
-                                    {QStringLiteral("-v"), QStringLiteral("error"),
-                                     QStringLiteral("-select_streams"), QStringLiteral("v:0"),
-                                     QStringLiteral("-show_entries"), QStringLiteral("stream=width,height"),
-                                     QStringLiteral("-of"), QStringLiteral("csv=p=0"), p});
-        if (!dims.isEmpty()) {
-            static const QRegularExpression dre(QStringLiteral("(\\d+)\\D+(\\d+)"));
-            const auto m = dre.match(dims);
-            if (m.hasMatch()) { c.w = m.captured(1).toInt(); c.h = m.captured(2).toInt(); }
-        }
-
-        const QString lrf = lrfFor.value(stemOf(p));
-        if (!lrf.isEmpty()) {
-            bool lok = false;
-            const double ld = runOut(QStringLiteral("ffprobe"),
-                                     {QStringLiteral("-v"), QStringLiteral("error"),
-                                      QStringLiteral("-show_entries"), QStringLiteral("format=duration"),
-                                      QStringLiteral("-of"), QStringLiteral("csv=p=0"), lrf}, &lok).toDouble();
-            if (lok && std::isfinite(ld) && ld > 0) {
-                c.lrf = lrf;
-                c.lrfDur = ld;
-                c.lrfSize = QFileInfo(lrf).size();
-            }
-        }
-        out.append(c);
+    QList<Library::ScanFile> files;
+    QSet<QString> seen;               // dedupe key: file name + size
+    for (const QString &path : candidates) {
+        const QFileInfo fi(path);
+        const QString key = fi.fileName().toLower() + QLatin1Char('|') + QString::number(fi.size());
+        if (seen.contains(key)) continue;
+        seen.insert(key);
+        files.append({path, fi.size()});
     }
 
-    std::sort(out.begin(), out.end(), [](const Clip &a, const Clip &b) { return a.path < b.path; });
-    for (int i = 0; i < out.size(); i++) out[i].id = i;
-    return out;
+    // Probe in parallel: every ffprobe over SMB/NFS is a round trip, and running
+    // them one by one turns a few hundred clips into a coffee break.
+    QList<Clip> probed;
+    probed.resize(files.size());
+    QList<bool> ok;
+    ok.resize(files.size());
+    std::atomic<int> next{0};
+    std::atomic<int> done{0};
+
+    auto work = [&]() {
+        for (;;) {
+            const int i = next.fetch_add(1);
+            if (i >= int(files.size())) break;
+            Clip c;
+            const bool readable = probeClip(files[i].path, files[i].size, lrfFor, &c);
+            probed[i] = c;
+            ok[i] = readable;
+            const int d = ++done;
+            if (progress && (d % 4 == 0 || d == int(files.size()))) progress(d, int(files.size()));
+        }
+    };
+
+    const int threads = std::max(1, std::min(8, QThread::idealThreadCount()));
+    if (threads <= 1 || files.size() <= 2) {
+        work();
+    } else {
+        std::vector<std::thread> pool;
+        pool.reserve(size_t(threads));
+        for (int t = 0; t < threads; t++) pool.emplace_back(work);
+        for (auto &t : pool) t.join();
+    }
+
+    Library::ScanOutcome outcome;
+    outcome.files = files.size();
+    for (int i = 0; i < probed.size(); i++) {
+        if (!ok[i]) { outcome.skipped++; continue; }
+        outcome.clips.append(probed[i]);
+    }
+    std::sort(outcome.clips.begin(), outcome.clips.end(),
+              [](const Clip &a, const Clip &b) { return a.path < b.path; });
+    for (int i = 0; i < outcome.clips.size(); i++) outcome.clips[i].id = i;
+    return outcome;
 }
+
 
 // Up to 12 evenly spaced 32x18 gray frames, scored for motion, colour, exposure
 // and variety. Pure and thread-safe: shells out to ffmpeg, touches no members.
 bool scoreClip(const Clip &c, int *score, int *mv, double *dk) {
     const double dur = (c.lrfDur > 0) ? c.lrfDur : c.duration;
     const QString path = (c.lrfDur > 0) ? c.lrf : c.path;
-    const int want = std::min(12, std::max(3, int(std::ceil(dur / 4.0))));
+    // Every sample is a separate ffmpeg invocation; on a network mount each one
+    // costs a round trip, so take fewer of them. The score moves by a few points,
+    // the wait moves by minutes.
+    const bool remote = path.contains(QLatin1String("/gvfs/")) || path.startsWith(QLatin1String("//")) ||
+                        path.startsWith(QLatin1String("/mnt/")) || path.startsWith(QLatin1String("/media/"));
+    const int maxSamples = remote ? 5 : 12;
+    const int want = std::min(maxSamples, std::max(3, int(std::ceil(dur / 4.0))));
     QList<QByteArray> samples;
     const int px = 32 * 18;
     for (int s = 0; s < want; s++) {
@@ -294,13 +375,22 @@ void Library::startIndex() {
     m_busy = true;
     m_scoreDone = 0;
     m_scoreTotal = 0;
+    m_scanDone = 0;
+    m_scanTotal = 0;
     const quint64 gen = ++m_gen;
     const QStringList dirs = m_dirs;
 
     // The index pass shells out to ffprobe per file: keep it off the UI thread.
     QThread *t = QThread::create([this, gen, dirs]() {
-        const QList<Clip> found = scanDirs(dirs);
-        QMetaObject::invokeMethod(this, [this, gen, found]() { applyIndex(gen, found); }, Qt::QueuedConnection);
+        auto report = [this](int done, int total) {
+            QMetaObject::invokeMethod(this, [this, done, total]() {
+                m_scanDone = done;
+                m_scanTotal = total;
+                emit scanProgress(done, total);
+            }, Qt::QueuedConnection);
+        };
+        const ScanOutcome outcome = scanDirs(dirs, report);
+        QMetaObject::invokeMethod(this, [this, gen, outcome]() { applyIndex(gen, outcome); }, Qt::QueuedConnection);
     });
     connect(t, &QThread::finished, t, &QObject::deleteLater);
     t->start();
@@ -319,9 +409,9 @@ void Library::reset() {
     emit scoringProgress(0, 0);
 }
 
-void Library::applyIndex(quint64 gen, const QList<Clip> &clips) {
+void Library::applyIndex(quint64 gen, const ScanOutcome &outcome) {
     if (gen != m_gen) return;
-    m_clips = clips;
+    m_clips = outcome.clips;
     m_indexById.clear();
     for (int i = 0; i < m_clips.size(); i++) m_indexById.insert(m_clips[i].id, i);
 
@@ -333,7 +423,13 @@ void Library::applyIndex(quint64 gen, const QList<Clip> &clips) {
 
     if (m_clips.isEmpty()) {
         m_busy = false;
-        emit failed(QStringLiteral("No playable videos found in %1").arg(m_dirs.join(QStringLiteral(", "))));
+        // Distinguish "nothing there" from "nothing readable": over a network
+        // mount those are very different problems.
+        if (outcome.skipped > 0)
+            emit failed(QStringLiteral("Could not read %1 of %2 videos in %3")
+                            .arg(outcome.skipped).arg(outcome.files).arg(m_dirs.join(QStringLiteral(", "))));
+        else
+            emit failed(QStringLiteral("No playable videos found in %1").arg(m_dirs.join(QStringLiteral(", "))));
         emit indexed();
         return;
     }
@@ -362,52 +458,100 @@ void Library::scoreClips(quint64 gen) {
         QHash<QString, QString> cachePaths;
         loadCaches(dirs, &cache, &cachePaths);
 
-        QList<Score> scores;
-        scores.resize(snapshot.size());
+        // Scoring is 12 ffmpeg spawns per clip; over SMB that is the slow part of
+        // the app by an order of magnitude, so the clips are spread over threads
+        // and the cache is flushed as we go (a scan of a network share can take
+        // long enough that the user closes the window first).
+        std::mutex cacheLock;
+        std::atomic<int> next{0};
+        std::atomic<int> done{0};
+        std::atomic<bool> flushing{false};
 
-        auto postProgress = [this, gen](int done, int total) {
-            QMetaObject::invokeMethod(this, [this, gen, done, total]() {
+        std::vector<Score> results;
+        results.resize(size_t(snapshot.size()));
+
+        auto postProgress = [this, gen](int d, int total) {
+            QMetaObject::invokeMethod(this, [this, gen, d, total]() {
                 if (gen != m_gen) return;
-                m_scoreDone = done;
-                emit scoringProgress(done, total);
+                m_scoreDone = d;
+                emit scoringProgress(d, total);
             }, Qt::QueuedConnection);
         };
 
-        for (int i = 0; i < snapshot.size(); i++) {
-            const Clip &c = snapshot[i];
-            const QFileInfo fi(c.path);
-            const qint64 sizeNow = fi.size();
-            const qint64 mtimeNow = qint64(fi.lastModified().toMSecsSinceEpoch());
-            const QVariantMap hit = cache.value(c.path);
-            const bool cacheOk = hit.value("ver").toInt() == 2 && hit.contains("mv") && hit.contains("dk") &&
-                                 hit.value("s").toLongLong() == sizeNow && hit.value("m").toLongLong() == mtimeNow &&
-                                 (c.lrf.isEmpty() || hit.value("ls").toLongLong() == c.lrfSize);
-
-            Score s;
-            if (cacheOk) {
-                s.score = hit.value("v").toInt();
-                s.mv = hit.value("mv").toInt();
-                s.dk = hit.value("dk").toDouble();
-                s.ok = true;
-            } else {
-                s.ok = scoreClip(c, &s.score, &s.mv, &s.dk);
-                if (!s.ok) { s.score = 0; s.mv = 0; s.dk = 1; }
-                QVariantMap entry;
-                entry["s"] = sizeNow;
-                entry["m"] = mtimeNow;
-                if (!c.lrf.isEmpty()) entry["ls"] = c.lrfSize;
-                entry["v"] = s.score;
-                entry["mv"] = s.mv;
-                entry["dk"] = s.dk;
-                entry["ver"] = 2;
-                cache.insert(c.path, entry);
+        auto flush = [&]() {
+            if (flushing.exchange(true)) return;
+            QHash<QString, QVariantMap> copy;
+            {
+                std::lock_guard<std::mutex> lock(cacheLock);
+                copy = cache;
             }
-            scores[i] = s;
-            const int done = i + 1;
-            if (done % 4 == 0 || done == snapshot.size()) postProgress(done, snapshot.size());
+            writeCaches(dirs, copy, cachePaths);
+            flushing = false;
+        };
+
+        const int total = snapshot.size();
+        auto work = [&]() {
+            for (;;) {
+                const int i = next.fetch_add(1);
+                if (i >= total) break;
+                const Clip &c = snapshot[i];
+                const QFileInfo fi(c.path);
+                const qint64 sizeNow = fi.size();
+                const qint64 mtimeNow = qint64(fi.lastModified().toMSecsSinceEpoch());
+
+                QVariantMap hit;
+                {
+                    std::lock_guard<std::mutex> lock(cacheLock);
+                    hit = cache.value(c.path);
+                }
+                const bool cacheOk = hit.value("ver").toInt() == 2 && hit.contains("mv") && hit.contains("dk") &&
+                                     hit.value("s").toLongLong() == sizeNow && hit.value("m").toLongLong() == mtimeNow &&
+                                     (c.lrf.isEmpty() || hit.value("ls").toLongLong() == c.lrfSize);
+
+                Score s;
+                if (cacheOk) {
+                    s.score = hit.value("v").toInt();
+                    s.mv = hit.value("mv").toInt();
+                    s.dk = hit.value("dk").toDouble();
+                    s.ok = true;
+                } else {
+                    s.ok = scoreClip(c, &s.score, &s.mv, &s.dk);
+                    // Unreadable is not "dark": scoring 0 with dk=1 would let the
+                    // junk filter silently drop a clip the network failed on.
+                    if (!s.ok) { s.score = 0; s.mv = 0; s.dk = 0.25; }
+                    QVariantMap entry;
+                    entry["s"] = sizeNow;
+                    entry["m"] = mtimeNow;
+                    if (!c.lrf.isEmpty()) entry["ls"] = c.lrfSize;
+                    entry["v"] = s.score;
+                    entry["mv"] = s.mv;
+                    entry["dk"] = s.dk;
+                    entry["ver"] = 2;
+                    std::lock_guard<std::mutex> lock(cacheLock);
+                    cache.insert(c.path, entry);
+                }
+                results[size_t(i)] = s;
+
+                const int d = ++done;
+                if (d % 2 == 0 || d == total) postProgress(d, total);
+                if (!cacheOk && d % 16 == 0) flush();
+            }
+        };
+
+        const int threads = std::max(1, std::min(8, QThread::idealThreadCount()));
+        if (threads <= 1 || total <= 1) {
+            work();
+        } else {
+            std::vector<std::thread> pool;
+            pool.reserve(size_t(threads));
+            for (int k = 0; k < threads; k++) pool.emplace_back(work);
+            for (auto &th : pool) th.join();
         }
 
-        writeCaches(dirs, cache, cachePaths);
+        flush();
+        QList<Score> scores;
+        scores.reserve(total);
+        for (int i = 0; i < total; i++) scores.append(results[size_t(i)]);
         QMetaObject::invokeMethod(this, [this, gen, scores]() { applyScores(gen, scores); }, Qt::QueuedConnection);
     });
     connect(t, &QThread::finished, t, &QObject::deleteLater);

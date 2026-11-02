@@ -351,8 +351,10 @@ QList<TlSeg> Scheduler::materialize(double songDuration, const QList<Clip> &base
             if (segs[i].id >= 0) continue;
         }
         const Clip &c = base[pos % base.size()];
-        // Near-black clips score ~0: roll on deterministically.
-        if (c.score < 8 && pos <= base.size() * 2) { pos++; i--; continue; }
+        // Near-black clips score ~0: roll on deterministically. A clip that has
+        // not been scored yet is not "bad" — the edit is generated as soon as the
+        // scan finishes so the user has something to look at while scoring runs.
+        if (c.scored && c.score < 8 && pos <= base.size() * 2) { pos++; i--; continue; }
         segs[i].id = c.id;
         segs[i].s = dur2seek(c, segs[i].len, rnd());
         pos++;

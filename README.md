@@ -31,8 +31,13 @@ cmake --install build --prefix ~/.local
 
 1. **Footage…** in the top bar lists the folders the library scans: add folders,
    remove the ones you are done with. Every video in them (`mp4`, `webm`, `mov`,
-   `mkv`, `m4v`) is indexed and scored, and DJI `.LRF` proxies are paired
-   automatically for fast cuts.
+   `mkv`, `m4v`) is indexed and scored; DJI `.LRF` proxies are paired
+   automatically for fast cuts and never indexed as clips, and a clip copied into
+   several date folders is only indexed once. Network shares mounted in your file
+   manager (SMB/SFTP/NFS) work as long as you pick the mounted folder.
+   Probing and scoring run in parallel and the top bar shows progress with an
+   ETA; the edit is generated as soon as the scan finds clips, and re-cut once
+   the scores are in.
 2. **Song…** loads a track. The app finds its tempo, energy curve, sections
    (chill / build / loud / drop) and any stutter it already has, then cuts the
    first edit for you.

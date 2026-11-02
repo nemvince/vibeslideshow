@@ -1,5 +1,6 @@
 #pragma once
 #include <QObject>
+#include <QElapsedTimer>
 #include <QUrl>
 #include <QVariantMap>
 #include <QVariantList>
@@ -28,6 +29,10 @@ class Studio : public QObject {
     Q_PROPERTY(QString status READ status NOTIFY statusChanged)
     Q_PROPERTY(int scoreDone READ scoreDone NOTIFY progressChanged)
     Q_PROPERTY(int scoreTotal READ scoreTotal NOTIFY progressChanged)
+    // 0..1 over whatever pass is running: scanning first, then scoring.
+    Q_PROPERTY(double progress READ progress NOTIFY progressChanged)
+    // "Scored 40 of 126 · ~3 min left" while a pass runs, empty otherwise.
+    Q_PROPERTY(QString progressLabel READ progressLabel NOTIFY progressChanged)
     Q_PROPERTY(QVariantList presets READ presets NOTIFY presetsChanged)
     Q_PROPERTY(QVariantList advanced READ advanced NOTIFY advancedChanged)
     Q_PROPERTY(QVariantList profiles READ profiles NOTIFY profilesChanged)
@@ -53,6 +58,8 @@ public:
     QString status() const { return m_status; }
     int scoreDone() const;
     int scoreTotal() const;
+    double progress() const;
+    QString progressLabel() const;
     QVariantList presets() const;
     QVariantList advanced() const;
     QVariantList profiles() const;
@@ -127,6 +134,8 @@ private:
     void writeProfiles();
     void applyFilters(const QVariantMap &m);
     void loadSongFile(const QString &path);
+    void noteProgress(int done, int total);
+    QString etaSuffix(int done, int total) const;
     QString configDir() const;
 
     Library *m_lib = nullptr;
@@ -144,8 +153,15 @@ private:
     QString m_status;
     bool m_busy = false;
     bool m_pendingRegenerate = false;
+    // True when the current edit was cut before scoring finished; it is re-cut
+    // once real scores land, unless the user already edited it by hand.
+    bool m_editUnscored = false;
     // Bumped per song load so a slow decode of a song the user already replaced
     // cannot install its analysis over the newer one.
     int m_songGen = 0;
+    // Progress timing for the ETA: reset whenever a new pass (or a new total)
+    // starts, so the rate is measured on the phase actually running.
+    QElapsedTimer m_phaseClock;
+    int m_phaseTotal = 0;
     QVariantMap m_profiles;
 };

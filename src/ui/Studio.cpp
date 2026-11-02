@@ -145,6 +145,8 @@ Studio::Studio(QObject *parent) : QObject(parent) {
     m_show->setScheduler(m_sched.get());
 
     connect(m_show, &Show::volumeChanged, this, &Studio::volumeChanged);
+    // The progress label lives and dies with busy; refresh it when either flips.
+    connect(this, &Studio::busyChanged, this, &Studio::progressChanged);
 
     connect(m_lib, &Library::indexed, this, [this]() {
         reloadLibraryModel();
@@ -152,7 +154,11 @@ Studio::Studio(QObject *parent) : QObject(parent) {
         emit filtersChanged();
         persist();
     });
-    connect(m_lib, &Library::scoringProgress, this, [this](int, int) { emit progressChanged(); });
+    connect(m_lib, &Library::scanProgress, this, [this](int done, int total) {
+        setStatus(QStringLiteral("Scanning footage… %1/%2").arg(done).arg(total));
+        noteProgress(done, total);
+    });
+    connect(m_lib, &Library::scoringProgress, this, [this](int done, int total) { noteProgress(done, total); });
     connect(m_lib, &Library::scoringFinished, this, [this]() {
         setBusy(false);
         setStatus(QStringLiteral("%1 clips ready").arg(m_lib->clips().size()));
@@ -162,6 +168,13 @@ Studio::Studio(QObject *parent) : QObject(parent) {
         syncScheduler();
         if (m_pendingRegenerate) {
             m_pendingRegenerate = false;
+            generate();
+            return;
+        }
+        // The visible edit was cut from unscored clips; now that the real scores
+        // are in, re-cut it — unless the user has already been editing by hand.
+        if (m_editUnscored && m_timeline->hasTimeline() && m_timeline->edits() == 0) {
+            m_editUnscored = false;
             generate();
         }
     });
@@ -313,6 +326,50 @@ void Studio::setBusy(bool b) {
 
 int Studio::scoreDone() const { return m_lib ? m_lib->scoreDone() : 0; }
 int Studio::scoreTotal() const { return m_lib ? m_lib->scoreTotal() : 0; }
+
+double Studio::progress() const {
+    if (!m_lib) return 0;
+    // Scanning comes first, then scoring; report whichever is running.
+    if (m_lib->scoreTotal() > 0) return double(m_lib->scoreDone()) / double(m_lib->scoreTotal());
+    if (m_lib->scanTotal() > 0) return double(m_lib->scanDone()) / double(m_lib->scanTotal());
+    return 0;
+}
+
+QString Studio::progressLabel() const {
+    if (!m_lib || !m_busy) return {};
+    if (m_lib->scoreTotal() > 0)
+        return QStringLiteral("Scoring %1 of %2%3")
+            .arg(m_lib->scoreDone()).arg(m_lib->scoreTotal())
+            .arg(etaSuffix(m_lib->scoreDone(), m_lib->scoreTotal()));
+    if (m_lib->scanTotal() > 0)
+        return QStringLiteral("Found %1 videos · probed %2%3")
+            .arg(m_lib->scanTotal()).arg(m_lib->scanDone())
+            .arg(etaSuffix(m_lib->scanDone(), m_lib->scanTotal()));
+    return m_status.isEmpty() ? QStringLiteral("Working…") : m_status;
+}
+
+QString Studio::etaSuffix(int done, int total) const {
+    if (total <= 0 || done <= 0) return {};
+    const double elapsed = m_phaseClock.isValid() ? m_phaseClock.elapsed() / 1000.0 : 0.0;
+    // Below a couple of seconds the rate is noise, and it jumps around once the
+    // first slow clip lands; better to say we are still measuring.
+    if (elapsed < 2.0 || done < 2) return QStringLiteral(" · estimating…");
+    const double rate = done / elapsed;
+    if (rate <= 0) return {};
+    const int left = int(std::ceil((total - done) / rate));
+    if (left <= 0) return QStringLiteral(" · almost done");
+    if (left < 60) return QStringLiteral(" · ~%1s left").arg(left);
+    return QStringLiteral(" · ~%1 min left").arg(int(std::ceil(left / 60.0)));
+}
+
+void Studio::noteProgress(int done, int total) {
+    // A different total means a new pass started (new scan, new library).
+    if (total != m_phaseTotal || done <= 1) {
+        m_phaseTotal = total;
+        m_phaseClock.restart();
+    }
+    emit progressChanged();
+}
 
 void Studio::startIndexing(const QStringList &dirs) {
     // Keep the list the caller gave us. Validating here and discarding what does
@@ -637,8 +694,15 @@ void Studio::generate() {
         setStatus(m_song.isEmpty() ? QStringLiteral("Choose a song first") : QStringLiteral("Still listening…"));
         return;
     }
-    if (m_lib && m_lib->busy()) { m_pendingRegenerate = true; return; }
-    if (m_busy) { m_pendingRegenerate = true; return; }
+    // Building the edit needs clip ids and durations, not scores: it can run while
+    // the library is still being scored. Only a scan that has not found anything
+    // yet holds it back. Waiting for scoring over a network share looked exactly
+    // like the app doing nothing.
+    if (!m_lib || m_lib->clips().isEmpty()) {
+        m_pendingRegenerate = m_lib && m_lib->busy();
+        setStatus(m_pendingRegenerate ? QStringLiteral("Scanning footage…") : QStringLiteral("Add a footage folder first"));
+        return;
+    }
 
     syncScheduler();
     m_clips->refresh();
@@ -653,6 +717,7 @@ void Studio::generate() {
         setStatus(QStringLiteral("Nothing to cut to"));
         return;
     }
+    m_editUnscored = m_lib && m_lib->scoreDone() < m_lib->scoreTotal();
     m_show->setEdit(m_timeline->segments(), m_timeline->cuts(), m_timeline->fades());
     emit editChanged();
     setStatus(QStringLiteral("%1 cuts from %2 clips").arg(m_timeline->rowCount()).arg(pool.size()));
