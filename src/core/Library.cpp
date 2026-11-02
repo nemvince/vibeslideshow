@@ -1,3 +1,4 @@
+#include "core/Tools.h"
 #include "core/Library.h"
 
 #include <QDir>
@@ -134,7 +135,7 @@ bool probeClip(const QString &path, qint64 size, const QHash<QString, QString> &
             bool ok = false;
             // A network mount answers slowly on the first touch: retry once with
             // a longer deadline before calling the file unreadable.
-            const double d = runOut(QStringLiteral("ffprobe"),
+            const double d = runOut(tools::path(QStringLiteral("ffprobe")),
                                     {QStringLiteral("-v"), QStringLiteral("error"),
                                      QStringLiteral("-show_entries"), QStringLiteral("format=duration"),
                                      QStringLiteral("-of"), QStringLiteral("csv=p=0"), p},
@@ -157,7 +158,7 @@ bool probeClip(const QString &path, qint64 size, const QHash<QString, QString> &
     if (stampOf(path, &day, &tod)) { c.day = day; c.tod = tod; c.hasTod = true; }
 
     // Dimensions feed the aspect-ratio filter; absent when unreadable.
-    const QString dims = runOut(QStringLiteral("ffprobe"),
+    const QString dims = runOut(tools::path(QStringLiteral("ffprobe")),
                                 {QStringLiteral("-v"), QStringLiteral("error"),
                                  QStringLiteral("-select_streams"), QStringLiteral("v:0"),
                                  QStringLiteral("-show_entries"), QStringLiteral("stream=width,height"),
@@ -294,7 +295,7 @@ bool scoreClip(const Clip &c, int *score, int *mv, double *dk, const std::functi
     for (int s = 0; s < want; s++) {
         const double t = std::round(((dur / (want + 1)) * (s + 1)) * 10.0) / 10.0;
         QProcess p;
-        p.start(QStringLiteral("ffmpeg"),
+        p.start(tools::path(QStringLiteral("ffmpeg")),
                 {QStringLiteral("-v"), QStringLiteral("error"),
                  QStringLiteral("-ss"), QString::number(t, 'f', 3),
                  QStringLiteral("-i"), path,

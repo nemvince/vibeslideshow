@@ -3,36 +3,149 @@ name: build
 on:
   push:
     branches: [main]
+    tags: ["v*"]
   pull_request:
   workflow_dispatch:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  QT_VERSION: "6.7.3"
+
 jobs:
+  # ---------------------------------------------------------------- linux
   linux:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install dependencies
+      # Ubuntu 24.04 ships Qt 6.4; this app needs 6.5, so Qt comes from aqtinstall.
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          cache: true
+
+      - name: Install system dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             build-essential cmake ninja-build pkg-config \
-            qt6-base-dev qt6-declarative-dev qt6-quickcontrols2-dev \
-            qml6-module-qtquick qml6-module-qtquick-controls \
-            qml6-module-qtquick-dialogs qml6-module-qtquick-layouts \
-            qml6-module-qtquick-window \
-            libmpv-dev libgl1-mesa-dev \
+            libmpv-dev libgl1-mesa-dev libxkbcommon-dev libxkbcommon-x11-0 \
+            libxcb-cursor0 libegl1 \
             ffmpeg
 
-      - name: Configure
-        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
-
       - name: Build
-        run: cmake --build build
+        run: ./scripts/build.sh --release
 
-      - name: Smoke test the binary
+      - name: Smoke test (headless)
         run: |
           ./build/vibeslideshow --version
+          QT_QPA_PLATFORM=offscreen timeout 8 ./build/vibeslideshow || [ $? -eq 124 ]
 
-      - name: Install
-        run: cmake --install build --prefix /tmp/prefix
+      - name: Package
+        run: ./scripts/package.sh --linux --no-build
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-x86_64
+          path: |
+            dist/*.tar.gz
+            dist/*.deb
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------- macos
+  macos:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          brew untap aws/tap || true
+          brew install qt mpv ffmpeg dylibbundler cmake ninja
+
+      - name: Build
+        env:
+          CMAKE_PREFIX_PATH: ${{ steps.brew.outputs.prefix || '' }}
+        run: |
+          export CMAKE_PREFIX_PATH="$(brew --prefix qt)"
+          ./scripts/build.sh --release
+
+      - name: Smoke test (headless)
+        run: |
+          QT_QPA_PLATFORM=offscreen ./build/vibeslideshow.app/Contents/MacOS/vibeslideshow --version
+
+      - name: Package
+        run: |
+          export PATH="$(brew --prefix qt)/bin:$PATH"
+          ./scripts/package.sh --macos --no-build
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-arm64
+          path: |
+            dist/*.zip
+            dist/*.dmg
+          if-no-files-found: error
+
+  # -------------------------------------------------------------- windows
+  windows:
+    runs-on: windows-2022
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            git
+            mingw-w64-x86_64-toolchain
+            mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-ninja
+            mingw-w64-x86_64-pkgconf
+            mingw-w64-x86_64-qt6-base
+            mingw-w64-x86_64-qt6-declarative
+            mingw-w64-x86_64-mpv
+            mingw-w64-x86_64-ffmpeg
+            zip
+            7zip
+
+      - name: Build
+        run: ./scripts/build.sh --release
+
+      - name: Smoke test
+        run: ./build/vibeslideshow.exe --version
+
+      - name: Package
+        run: ./scripts/package.sh --windows --no-build
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-x86_64
+          path: dist/*.zip
+          if-no-files-found: error
+
+  # --------------------------------------------------------------- release
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [linux, macos, windows]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Publish release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/**/*
+          generate_release_notes: true

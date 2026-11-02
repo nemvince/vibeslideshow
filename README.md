@@ -46,7 +46,8 @@ cmake --install build --prefix ~/.local
 4. The panel on the right is the settings panel, in collapsible sections: **Look**
    (one dropdown of presets plus saved looks), **Footage** (the filters — best
    clips only, keep the frame moving, skip dark clips, one day, daytime hours),
-   **Saved looks** and **Advanced** (the full parameter list).
+   **Saved looks** and **Advanced** (a dozen controls that mean something;
+   thresholds and windows the presets tune stay out of the UI).
 5. The strip at the bottom is the edit. Select a segment to shorten, lengthen,
    chop, re-roll its in-point, swap its clip or delete it. Click a clip in the
    rail to drop it in at the playhead.
@@ -60,7 +61,7 @@ Space plays and pauses, arrow keys nudge ±5 s, `Ctrl+G` regenerates the edit,
 src/
   core/Analyzer    ffmpeg decode + beat/energy/section analysis
   core/Scheduler   buildCuts() + materialise() + seeded RNG
-  core/Params      the 33 parameters, presets, filter + skip-window config
+  core/Params      the generation parameters, presets, filter + skip-window config
   core/Library     scan, ffprobe, LRF pairing, scoring, cache
   player/MpvItem   one video surface: QQuickFramebufferObject + mpv_render_gl
   player/Show      the edit engine: audio-master clock, preload, crossfade

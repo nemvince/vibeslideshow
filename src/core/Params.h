@@ -20,13 +20,8 @@ struct Params {
     double stutterRamp = 0.4;
     double stutterAccent = 0.85;
     int fadeMs = 120;
-    int darkMean = 3;
-    double darkBrightPct = 1;
-    int darkRetries = 4;
     bool useLrf = true;
-    bool precache = true;
     bool mood = true;
-    bool fancy = true;
     bool shuffle = false;
     bool skipJunk = true;
     bool replicate = true;
@@ -35,10 +30,10 @@ struct Params {
     int aggrQuarterRun = 6;
     double aggrFloor = 0;     // presets raise/lower this; 0 means "unset" in buildCuts
     int insMax = 48;          // presets override this
-    bool reactive = true;
-    int reactiveMs = 250;
-    double reactiveCool = 1.5;
     double gridSec = 0.5;
+    // Shortest shot, in seconds. Calm passages breathe with it even when the
+    // energy curve says "cut on every beat"; loud sections scale it down.
+    double minShotSec = 1.2;
     int seed = 0;
     QString skipWindows = QStringLiteral("2026-08-14±1");
 

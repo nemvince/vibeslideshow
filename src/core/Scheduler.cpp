@@ -121,7 +121,7 @@ Cuts Scheduler::buildCuts(double songDuration) const {
                 const Section &secH = secs[siH];
                 const double endH = (siH + 1 < secs.size()) ? secs[siH + 1].s : songDuration;
                 if (secH.kind == QLatin1String("chill"))
-                    hold = std::min(m_p.holdMax, jsRound(hold * 1.35));
+                    hold = std::min(m_p.holdMax * 2, jsRound(hold * 1.6));
                 else if (secH.kind == QLatin1String("loud"))
                     hold = std::max(1, jsRound(hold * 0.6));
                 else if (secH.kind == QLatin1String("build")) {
@@ -132,6 +132,26 @@ Cuts Scheduler::buildCuts(double songDuration) const {
                     hold = std::max(hold, std::min(m_p.holdMax * 2, jsRound((endH - bts[i]) / std::max(0.05, nxt))));
                 }
             }
+        }
+
+        // Section floor in seconds. The energy curve alone asks for a cut on every
+        // beat through a quiet passage, which reads as noise: calm material is held
+        // far longer than its energy suggests, loud material may still move fast.
+        {
+            const int siM = secIdxAt(bts[i]);
+            const QString kind = siM >= 0 ? secs[siM].kind : QStringLiteral("mid");
+            const double base = std::max(0.2, m_p.minShotSec);
+            double floorSec = base;
+            if (kind == QLatin1String("chill")) floorSec = base * 2.5;
+            else if (kind == QLatin1String("build")) floorSec = base * 1.3;
+            else if (kind == QLatin1String("loud")) floorSec = base * 0.55;
+            else if (kind == QLatin1String("drop")) floorSec = base * 0.4;
+            else floorSec = base * 1.7;   // mid: the bulk of most songs
+            const double beatInt = (i + 1 < nB) ? std::max(0.08, bts[i + 1] - bts[i]) : 0.5;
+            const int minBeats = int(std::ceil(floorSec / beatInt));
+            hold = std::max(hold, minBeats);
+            // Cap the other side too: a hold may not run far past the floor either.
+            hold = std::min(hold, std::max(m_p.holdMax, minBeats) * 2);
         }
 
         const bool dropHere = dropT.contains(bts[i]) && !dropBest.isEmpty();
@@ -235,8 +255,12 @@ Cuts Scheduler::buildCuts(double songDuration) const {
             }
         }
 
-        // 3. Otherwise a taste split on slow→loud ramps and strong accents.
-        if (inserted.isEmpty() && k + 1 < cuts.size() && !dropT.contains(t0)) {
+        // 3. Otherwise a taste split on slow→loud ramps and strong accents. Calm
+        // sections are exempt: adding chops there is exactly what made quiet
+        // passages feel busy.
+        const int siSplit = secIdxAt(t0);
+        const bool calmSplit = m_p.mood && siSplit >= 0 && secs[siSplit].kind == QLatin1String("chill");
+        if (!calmSplit && inserted.isEmpty() && k + 1 < cuts.size() && !dropT.contains(t0)) {
             const double gap = segEnd - t0;
             const double bpm = m_a.hasBpm ? m_a.bpm : 0;
             const int splitN = std::max(2, m_p.split);
@@ -265,12 +289,42 @@ Cuts Scheduler::buildCuts(double songDuration) const {
         out += dedup;
     }
 
+    // Final pass: the section floor applies to the finished list, not just to the
+    // beat walk. Replicated song stutters and aggressive-run splits used to slip
+    // between two cuts and keep calm passages busy.
+    auto floorSecAt = [&](double t) {
+        const int si = secIdxAt(t);
+        const QString kind = si >= 0 ? secs[si].kind : QStringLiteral("mid");
+        const double base = std::max(0.2, m_p.minShotSec);
+        if (kind == QLatin1String("chill")) return base * 2.5;
+        if (kind == QLatin1String("build")) return base * 1.3;
+        if (kind == QLatin1String("loud")) return base * 0.55;
+        if (kind == QLatin1String("drop")) return base * 0.4;
+        return base * 1.7;
+    };
+
+    QList<double> kept;
+    QList<int> keptPick;
+    for (int i = 0; i < out.size(); i++) {
+        const double t = out[i];
+        if (kept.isEmpty()) {
+            kept.append(t);
+            keptPick.append(outPick.value(i, -1));
+            continue;
+        }
+        // The drop opener is never dropped, however close it lands.
+        const bool isDropOpen = dropT.contains(t);
+        if (!isDropOpen && t - kept.last() < floorSecAt(t)) continue;
+        kept.append(t);
+        keptPick.append(outPick.value(i, -1));
+    }
+
     // Per-cut crossfade: drops/loud are hard, chill dissolves long, inserted
     // micro-cuts are hard outside chill sections.
     Cuts result;
-    result.times = out;
-    result.picks = outPick;
-    for (double t : out) {
+    result.times = kept;
+    result.picks = keptPick;
+    for (double t : kept) {
         const int si = secIdxAt(t);
         if (m_p.mood && si >= 0 && secs[si].kind == QLatin1String("chill")) {
             result.fades.append(std::min(400.0, std::max(150.0, std::round(m_p.fadeMs * 2.5))));

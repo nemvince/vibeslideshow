@@ -1,3 +1,4 @@
+#include "core/Tools.h"
 #include "ui/Studio.h"
 #include "core/Library.h"
 #include "core/Scheduler.h"
@@ -547,7 +548,7 @@ void Studio::loadSongFile(const QString &path) {
         double dur = 0;
         if (ok) {
             QProcess probe;
-            probe.start(QStringLiteral("ffprobe"),
+            probe.start(tools::path(QStringLiteral("ffprobe")),
                         {QStringLiteral("-v"), QStringLiteral("error"), QStringLiteral("-show_entries"),
                          QStringLiteral("format=duration"), QStringLiteral("-of"), QStringLiteral("csv=p=0"), path});
             if (probe.waitForFinished(10000))

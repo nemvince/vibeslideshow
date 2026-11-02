@@ -1,3 +1,4 @@
+#include "core/Tools.h"
 #include "ui/ClipModel.h"
 #include "core/Library.h"
 
@@ -46,7 +47,7 @@ ThumbJob::ThumbJob(const QString &src, double seek, const QString &dest, const Q
 
 void ThumbJob::run() {
     QProcess p;
-    p.start(QStringLiteral("ffmpeg"),
+    p.start(tools::path(QStringLiteral("ffmpeg")),
             {QStringLiteral("-v"), QStringLiteral("error"), QStringLiteral("-y"),
              QStringLiteral("-ss"), QString::number(m_seek, 'f', 2),
              QStringLiteral("-i"), m_src,

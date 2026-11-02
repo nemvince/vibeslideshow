@@ -1,3 +1,4 @@
+#include "core/Tools.h"
 #include "core/Analyzer.h"
 
 #include <QProcess>
@@ -31,7 +32,7 @@ inline double r3(double v) { return std::round(v * 1000.0) / 1000.0; }
 
 bool Analyzer::decodeAudio(const QString &path, QList<float> &pcm, QString *error) {
     QProcess p;
-    p.start(QStringLiteral("ffmpeg"),
+    p.start(tools::path(QStringLiteral("ffmpeg")),
             {QStringLiteral("-v"), QStringLiteral("error"),
              QStringLiteral("-i"), path,
              QStringLiteral("-ac"), QStringLiteral("1"),
