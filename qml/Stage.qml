@@ -97,4 +97,37 @@ Item {
             font.pixelSize: 11
         }
     }
+
+    // The song keeps running while the picture waits for the file: say so, or a
+    // frozen frame reads as a broken app rather than a slow drive.
+    Rectangle {
+        anchors { right: parent.right; bottom: parent.bottom; margins: 14 }
+        width: bufferRow.implicitWidth + 22
+        height: 28
+        radius: 6
+        color: "#00000099"
+        visible: showCtl.buffering
+        Row {
+            id: bufferRow
+            anchors.centerIn: parent
+            spacing: 7
+            Rectangle {
+                width: 7; height: 7; radius: 3.5
+                anchors.verticalCenter: parent.verticalCenter
+                color: Theme.accent
+                SequentialAnimation on opacity {
+                    running: showCtl.buffering
+                    loops: Animation.Infinite
+                    NumberAnimation { from: 1; to: 0.25; duration: 560 }
+                    NumberAnimation { from: 0.25; to: 1; duration: 560 }
+                }
+            }
+            Text {
+                anchors.verticalCenter: parent.verticalCenter
+                text: "Buffering…"
+                color: Theme.ink
+                font.pixelSize: 11
+            }
+        }
+    }
 }

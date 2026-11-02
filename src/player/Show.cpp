@@ -157,6 +157,12 @@ void Show::play() {
     }
 }
 
+void Show::setBuffering(bool b) {
+    if (m_buffering == b) return;
+    m_buffering = b;
+    emit bufferingChanged();
+}
+
 void Show::pause() {
     if (m_audio) {
         int pause = 1;
@@ -164,6 +170,7 @@ void Show::pause() {
     }
     m_playing = false;
     m_tick.stop();
+    setBuffering(false);
     if (m_a) m_a->setPaused(true);
     if (m_b) m_b->setPaused(true);
     emit playingChanged();
@@ -247,6 +254,10 @@ void Show::startSegment(int idx, double songTime) {
     emit cutIndexChanged();
     emit crossfade(m_aIsFront, int(std::lround(m_lastFadeMs)));
     m_sinceCut.restart();
+    // A new clip starts on its own buffer: reset stall tracking for it.
+    m_lastFrameTs = -1;
+    m_seekStreak = 0;
+    m_sinceFrameAdvance.restart();
 
     // The outgoing surface is still on screen for m_lastFadeMs. Loading into it
     // now would show the next clip through the fade, so the preload waits.
@@ -254,7 +265,9 @@ void Show::startSegment(int idx, double songTime) {
 }
 
 void Show::maybePreload() {
-    if (!m_playing) return;
+    // Preloading the next clip over a link that cannot even feed the current one
+    // only makes the stall worse.
+    if (!m_playing || m_buffering) return;
     if (m_preloadPending < 0 || m_preloaded == m_preloadPending) return;
     if (m_sinceCut.isValid() && m_sinceCut.elapsed() < m_lastFadeMs + 60) return;
     preloadNext(m_preloadPending);
@@ -288,6 +301,9 @@ void Show::revealCut(int next) {
     emit cutIndexChanged();
     emit crossfade(m_aIsFront, int(std::lround(m_lastFadeMs)));
     m_sinceCut.restart();
+    m_lastFrameTs = -1;
+    m_seekStreak = 0;
+    m_sinceFrameAdvance.restart();
 }
 
 void Show::tick() {
@@ -312,20 +328,39 @@ void Show::tick() {
         maybePreload();
     }
 
+    // Stall detection before drift correction: if the visible surface has not
+    // produced a frame for over a second while the song runs, it is waiting on
+    // the file. Correcting its clock then is actively harmful — every seek
+    // discards the reader's buffer and starts the fetch over, which is how a
+    // slow share ends up showing one static frame per seek forever.
+    MpvItem *front = m_aIsFront ? m_a : m_b;
+    if (front) {
+        const double ft = front->frameTime();
+        if (ft != m_lastFrameTs) {
+            m_lastFrameTs = ft;
+            m_sinceFrameAdvance.restart();
+            m_seekStreak = 0;
+            setBuffering(false);
+        } else if (m_sinceFrameAdvance.isValid() && m_sinceFrameAdvance.elapsed() > 1200) {
+            setBuffering(true);
+        }
+    }
+
     // Drift guard: if the on-screen clip wanders off the song by more than a
     // frame or two, pull it back. Small drift is left alone so playback stays
-    // smooth instead of stuttering on repeated seeks.
-    if (MpvItem *front = m_aIsFront ? m_a : m_b) {
+    // smooth, and repeated corrections that do not stick back off exponentially.
+    if (front && !m_buffering) {
         const double want = expectedVideoTime(m_cutIdx, m_pos);
         // Just after a cut the surface is still opening the new file and its
         // clock reports the OLD clip's time; correcting then would stack seeks on
-        // top of the one the cut already issued. The cooldown stops a single
-        // correction from being reissued before it has taken effect.
+        // top of the one the cut already issued.
         const bool settled = m_sinceCut.isValid() ? m_sinceCut.elapsed() > 700 : true;
-        const bool cooled = m_sinceCorrection.isValid() ? m_sinceCorrection.elapsed() > 500 : true;
+        const double cooldownMs = std::min(8000.0, 500.0 * std::pow(2.0, m_seekStreak));
+        const bool cooled = !m_sinceCorrection.isValid() || m_sinceCorrection.elapsed() >= cooldownMs;
         if (settled && cooled && !front->paused() && std::fabs(front->frameTime() - want) > 0.15) {
             front->seekExact(want);
             m_sinceCorrection.restart();
+            m_seekStreak = std::min(m_seekStreak + 1, 4);
         }
     }
 

@@ -109,6 +109,14 @@ void MpvItem::pollEvents() {
 
 void MpvItem::loadAndSeek(const QString &path, double t) {
     if (!m_mpv || path.isEmpty()) return;
+    // Readahead defaults assume a local disk. On a network mount, asking for 20 s
+    // of buffer means the reader competes with the decoder for a slow link and
+    // the picture stalls on the frame it already had.
+    const bool remote = path.contains(QLatin1String("/gvfs/")) || path.startsWith(QLatin1String("//")) ||
+                        path.startsWith(QLatin1String("/mnt/")) || path.startsWith(QLatin1String("/media/"));
+    mpv_set_property_string(m_mpv, "demuxer-readahead-secs", remote ? "2" : "20");
+    mpv_set_property_string(m_mpv, "demuxer-max-bytes", remote ? "48MiB" : "256MiB");
+
     m_pendingPath = path;
     m_pendingSeek = t;
     m_pendingLoad = true;

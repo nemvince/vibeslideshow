@@ -27,6 +27,9 @@ class Show : public QObject {
     Q_PROPERTY(int currentClip READ currentClip NOTIFY currentClipChanged)
     Q_PROPERTY(QString positionText READ positionText NOTIFY positionChanged)
     Q_PROPERTY(QString durationText READ durationText NOTIFY durationChanged)
+    // True when the song clock is running but the visible surface stopped
+    // producing frames: the file is being fetched, not played.
+    Q_PROPERTY(bool buffering READ buffering NOTIFY bufferingChanged)
 public:
     explicit Show(QObject *parent = nullptr);
     ~Show() override;
@@ -44,6 +47,7 @@ public:
     int cutIndex() const { return m_cutIdx; }
     int segmentCount() const { return m_segs.size(); }
     int currentClip() const { return m_currentClip; }
+    bool buffering() const { return m_buffering; }
 
     void setScheduler(Scheduler *s) { m_sched = s; }
     void setLibrary(Library *l) { m_lib = l; }
@@ -69,6 +73,7 @@ signals:
     void volumeChanged();
     void songChanged();
     void readyChanged();
+    void bufferingChanged();
     void cutIndexChanged();
     void segmentsChanged();
     void currentClipChanged();
@@ -82,6 +87,7 @@ private:
     void preloadNext(int idx);
     void maybePreload();
     void revealCut(int next);
+    void setBuffering(bool b);
     double expectedVideoTime(int idx, double songTime) const;
     QString pathFor(const TlSeg &s, double *dur) const;
     void setPos(double t);
@@ -119,4 +125,12 @@ private:
     // that produces a seek storm instead of a correction.
     QElapsedTimer m_sinceCut;
     QElapsedTimer m_sinceCorrection;
+    // Stall detection: a surface that has not produced a new frame for a while is
+    // fetching, not drifting, and MUST NOT be seeked (a seek on a starved
+    // demuxer throws the buffered data away and starts again from the network).
+    bool m_buffering = false;
+    double m_lastFrameTs = -1;
+    QElapsedTimer m_sinceFrameAdvance;
+    // Repeated corrections that did not stick: back off instead of hammering.
+    int m_seekStreak = 0;
 };
