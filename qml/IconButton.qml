@@ -16,17 +16,20 @@ Rectangle {
     color: mouse.containsMouse && enabled ? Theme.panelHi : "transparent"
     opacity: enabled ? 1 : 0.35
 
+    Behavior on color { ColorAnimation { duration: Theme.durFast } }
+
     Text {
         anchors.centerIn: parent
         text: btn.glyph
-        color: Theme.ink
+        color: mouse.pressed && btn.enabled ? Theme.accent : Theme.ink
         font.pixelSize: 14
+        Behavior on color { ColorAnimation { duration: Theme.durFast } }
     }
     MouseArea {
         id: mouse
         anchors.fill: parent
         hoverEnabled: true
-        cursorShape: Qt.PointingHandCursor
+        cursorShape: btn.enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
         onClicked: btn.clicked()
     }
     ToolTip.visible: mouse.containsMouse && btn.tip.length > 0 && btn.enabled

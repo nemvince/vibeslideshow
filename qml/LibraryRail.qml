@@ -13,8 +13,10 @@ Rectangle {
     id: rail
     color: Theme.panel
 
-    property int hovered: -1
     property bool dropHover: false
+    // The clip the last click or menu acted on: a quiet marker, so the row you
+    // just edited is still identifiable after the pointer moves away.
+    property int selectedClip: -1
 
     Rectangle { anchors.right: parent.right; width: 1; height: parent.height; color: Theme.line }
 
@@ -49,9 +51,38 @@ Rectangle {
             color: Theme.ink
             font.pixelSize: 11
             leftPadding: 8
-            rightPadding: 8
-            background: Rectangle { color: Theme.bg; radius: 5; border.color: Theme.line }
+            rightPadding: 26
+            selectByMouse: true
+            background: Rectangle {
+                color: Theme.bg
+                radius: 5
+                border.color: search.activeFocus ? Theme.accent : Theme.line
+                Behavior on border.color { ColorAnimation { duration: Theme.durFast } }
+            }
             onTextChanged: clips.search = text
+            // Escape clears instead of leaving the field: the list is the point.
+            Keys.onEscapePressed: {
+                if (text.length) text = ""
+                else focus = false
+            }
+
+            Text {
+                // The ✕ only exists while there is something to clear.
+                anchors { right: parent.right; rightMargin: 5; verticalCenter: parent.verticalCenter }
+                width: 16
+                height: 16
+                visible: search.text.length > 0
+                horizontalAlignment: Text.AlignHCenter
+                text: "✕"
+                color: clearHover.hovered ? Theme.ink : Theme.faint
+                font.pixelSize: 9
+                HoverHandler { id: clearHover }
+                MouseArea {
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: search.text = ""
+                }
+            }
         }
 
         // The clip list.
@@ -64,17 +95,7 @@ Rectangle {
             model: clips
             spacing: 4
             cacheBuffer: 800
-            ScrollBar.vertical: ScrollBar {
-                policy: ScrollBar.AsNeeded
-                width: 6
-                background: Item {}
-                contentItem: Rectangle {
-                    implicitWidth: 4
-                    radius: 2
-                    color: Theme.faint
-                    opacity: parent.pressed ? 0.9 : 0.3
-                }
-            }
+            ScrollBar.vertical: ThinScrollBar {}
 
             delegate: Item {
                 id: row
@@ -85,10 +106,17 @@ Rectangle {
                 height: 54
                 opacity: model.inPool ? 1 : 0.32
 
+                Behavior on opacity { NumberAnimation { duration: Theme.durFast } }
+
                 Rectangle {
                     anchors.fill: parent
                     radius: 7
-                    color: hover.hovered ? Theme.panelHi : "transparent"
+                    color: hover.hovered ? Theme.panelHi
+                           : (model.clipId === rail.selectedClip ? Theme.bg : "transparent")
+                    border.color: model.clipId === rail.selectedClip ? Theme.accent : "transparent"
+                    border.width: 1
+                    Behavior on color { ColorAnimation { duration: Theme.durFast } }
+                    Behavior on border.color { ColorAnimation { duration: Theme.durFast } }
                 }
 
                 Rectangle {
@@ -111,12 +139,27 @@ Rectangle {
                 Column {
                     anchors { left: thumbFrame.right; leftMargin: 9; right: parent.right; rightMargin: 8; verticalCenter: parent.verticalCenter }
                     spacing: 3
-                    Text {
+                    // Name, with the length pinned to the right edge: a duration
+                    // that floated along with the filename would move from row to
+                    // row and stop being scannable.
+                    Item {
                         width: parent.width
-                        text: model.name
-                        color: Theme.ink
-                        font.pixelSize: 11
-                        elide: Text.ElideMiddle
+                        height: 14
+                        Text {
+                            id: nameText
+                            width: parent.width - durText.width - 6
+                            text: model.name
+                            color: Theme.ink
+                            font.pixelSize: 11
+                            elide: Text.ElideMiddle
+                        }
+                        Text {
+                            id: durText
+                            anchors { right: parent.right; verticalCenter: parent.verticalCenter }
+                            text: Math.round(model.duration * 10) / 10 + " s"
+                            color: Theme.faint
+                            font.pixelSize: 10
+                        }
                     }
                     Row {
                         spacing: 6
@@ -138,6 +181,11 @@ Rectangle {
                 }
 
                 HoverHandler { id: hover }
+
+                ToolTip.visible: hover.hovered && !rail.dropHover
+                ToolTip.text: model.path
+                ToolTip.delay: 700
+
                 MouseArea {
                     anchors.fill: parent
                     acceptedButtons: Qt.LeftButton | Qt.RightButton
@@ -147,6 +195,7 @@ Rectangle {
                     // Click a clip to drop it into the show at the playhead,
                     // right-click it for what else can be done with it.
                     onClicked: (mouse) => {
+                        rail.selectedClip = model.clipId
                         if (mouse.button === Qt.RightButton) {
                             const p = mapToItem(rail, mouse.x, mouse.y)
                             rail.openClipMenu(model.clipId, model.name, p.x, p.y)
@@ -163,7 +212,9 @@ Rectangle {
                 horizontalAlignment: Text.AlignHCenter
                 wrapMode: Text.WordWrap
                 visible: clips.count === 0
-                text: studio.busy ? "Looking for footage…" : "No footage yet — import files or a folder"
+                text: studio.busy ? "Looking for footage…"
+                      : clips.search.length ? "No clip matches \"" + clips.search + "\""
+                      : "No footage yet — import files or a folder"
                 color: Theme.faint
                 font.pixelSize: 12
             }
@@ -181,11 +232,15 @@ Rectangle {
     function openClipMenu(clipId, name, x, y) {
         clipMenu.clipId = clipId
         clipMenu.clipName = name
+        rail.selectedClip = clipId
         const h = clipMenu.implicitHeight
         clipMenu.x = Math.max(0, Math.min(rail.width - clipMenu.width, x))
         clipMenu.y = (y + h > rail.height) ? Math.max(0, y - h) : y
         clipMenu.active = clipMenu.firstEnabled()
-        clipMenu.open()
+        // Opened a turn later: a popup that appears inside the click that asked
+        // for it is closed again by that same click, and the fade makes the
+        // window where that happens wider.
+        Qt.callLater(clipMenu.open)
     }
 
     // The clip menu: what a right-click on a bin row offers. Inserting needs a
@@ -207,6 +262,9 @@ Rectangle {
         modal: false
         focus: true
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+
+        enter: Transition { NumberAnimation { property: "opacity"; from: 0; to: 1; duration: Theme.durFast } }
+        exit: Transition { NumberAnimation { property: "opacity"; from: 1; to: 0; duration: 90 } }
 
         background: Rectangle {
             color: Theme.panelHi
@@ -324,6 +382,9 @@ Rectangle {
         width: 160
         padding: 4
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+
+        enter: Transition { NumberAnimation { property: "opacity"; from: 0; to: 1; duration: Theme.durFast } }
+        exit: Transition { NumberAnimation { property: "opacity"; from: 1; to: 0; duration: 90 } }
 
         background: Rectangle {
             color: Theme.panelHi

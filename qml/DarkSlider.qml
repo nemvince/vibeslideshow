@@ -22,15 +22,23 @@ Slider {
             height: parent.height
             radius: 1.5
             color: s.fillColor
+            // Eased when the model moves it (a preset, a reset); direct while the
+            // user drags, where a lag would feel like a stuck handle.
+            Behavior on width {
+                enabled: !s.pressed
+                NumberAnimation { duration: Theme.durFast; easing.type: Easing.OutCubic }
+            }
         }
     }
 
     handle: Rectangle {
         x: s.leftPadding + s.visualPosition * (s.availableWidth - width)
         y: s.topPadding + s.availableHeight / 2 - height / 2
-        width: 12
-        height: 12
-        radius: 6
+        width: s.pressed || s.hovered ? 14 : 12
+        height: width
+        radius: width / 2
         color: s.enabled ? Theme.ink : Theme.faint
+
+        Behavior on width { NumberAnimation { duration: Theme.durFast; easing.type: Easing.OutCubic } }
     }
 }

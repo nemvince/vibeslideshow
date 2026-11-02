@@ -15,6 +15,9 @@ Item {
         color: hovered.hovered ? Theme.panelHi : Theme.bg
         border.color: picker.open ? Theme.accent : Theme.line
 
+        Behavior on color { ColorAnimation { duration: Theme.durFast } }
+        Behavior on border.color { ColorAnimation { duration: Theme.durFast } }
+
         Text {
             anchors { left: parent.left; leftMargin: 10; right: arrow.left; rightMargin: 6; verticalCenter: parent.verticalCenter }
             text: studio.filters.day.length ? studio.filters.day : (studio.days.length ? studio.days[0] : "no stamped days")
@@ -57,6 +60,9 @@ Item {
         }
         width: picker.width
         padding: 4
+
+        enter: Transition { NumberAnimation { property: "opacity"; from: 0; to: 1; duration: Theme.durFast } }
+        exit: Transition { NumberAnimation { property: "opacity"; from: 1; to: 0; duration: 90 } }
         implicitHeight: Math.min(list.contentHeight + 8, 320)
         background: Rectangle { color: Theme.panelHi; radius: 8; border.color: Theme.line }
         onClosed: picker.open = false

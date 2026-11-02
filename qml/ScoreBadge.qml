@@ -18,6 +18,8 @@ Rectangle {
         radius: 3
         color: badge.score >= 55 ? Theme.good : badge.score >= 30 ? Theme.accent : Theme.bad
         opacity: 0.75
+        Behavior on width { NumberAnimation { duration: Theme.dur; easing.type: Easing.OutCubic } }
+        Behavior on color { ColorAnimation { duration: Theme.dur } }
     }
     Text {
         anchors.centerIn: parent

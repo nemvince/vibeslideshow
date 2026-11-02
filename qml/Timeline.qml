@@ -111,17 +111,9 @@ Item {
 
             // Only there when there is something to scroll, and draggable: the
             // strip answers the wheel, a drag on it and this bar.
-            ScrollBar.horizontal: ScrollBar {
-                id: hbar
-                policy: tl.zoomed ? ScrollBar.AsNeeded : ScrollBar.AlwaysOff
+            ScrollBar.horizontal: ThinScrollBar {
                 height: 8
-                background: Item {}
-                contentItem: Rectangle {
-                    implicitHeight: 5
-                    radius: 2.5
-                    color: Theme.dim
-                    opacity: hbar.pressed ? 1.0 : 0.55
-                }
+                policy: tl.zoomed ? ScrollBar.AsNeeded : ScrollBar.AlwaysOff
             }
 
             Item {
@@ -191,8 +183,10 @@ Item {
 
                             Rectangle {
                                 anchors.fill: parent
-                                color: cell.model.segSelected ? "#2c3138" : Theme.panelHi
+                                color: cell.model.segSelected ? "#2c3138"
+                                       : (cellHover.hovered ? "#262a2f" : Theme.panelHi)
                                 clip: true
+                                Behavior on color { ColorAnimation { duration: Theme.durFast } }
 
                                 Image {
                                     anchors.fill: parent
@@ -236,19 +230,26 @@ Item {
                                 }
                             }
 
+                            HoverHandler { id: cellHover }
+
                             // Selection: top and bottom rules, so a thin segment cannot
-                            // lose its highlight.
+                            // lose its highlight. Faded in rather than popped, because
+                            // the eye is on the frame, not on this.
                             Rectangle {
                                 anchors { left: parent.left; right: parent.right; top: parent.top }
                                 height: 2
                                 color: Theme.accent
-                                visible: cell.model.segSelected
+                                visible: opacity > 0
+                                opacity: cell.model.segSelected ? 1 : 0
+                                Behavior on opacity { NumberAnimation { duration: Theme.durFast } }
                             }
                             Rectangle {
                                 anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
                                 height: 2
                                 color: Theme.accent
-                                visible: cell.model.segSelected
+                                visible: opacity > 0
+                                opacity: cell.model.segSelected ? 1 : 0
+                                Behavior on opacity { NumberAnimation { duration: Theme.durFast } }
                             }
                         }
                     }
@@ -259,7 +260,9 @@ Item {
                     x: Math.max(0, Math.min(canvas.width - width, tl.progressFrac * canvas.width - width / 2))
                     width: 11
                     height: canvas.height
-                    visible: timeline.count > 0
+                    visible: opacity > 0
+                    opacity: timeline.count > 0 ? 1 : 0
+                    Behavior on opacity { NumberAnimation { duration: Theme.dur } }
 
                     Rectangle {
                         anchors.horizontalCenter: parent.horizontalCenter

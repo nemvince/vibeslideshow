@@ -18,4 +18,10 @@ QtObject {
     readonly property int gap: 14
     readonly property int pad: 18
     readonly property int radius: 10
+
+    // Motion, in one place. Every hover and selection animation in the app reads
+    // these, so nothing reacts faster than anything else: `durFast` is feedback
+    // under the pointer, `dur` is something appearing or resizing under the eye.
+    readonly property int durFast: 110
+    readonly property int dur: 170
 }

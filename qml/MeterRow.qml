@@ -42,6 +42,7 @@ ColumnLayout {
             height: parent.height
             radius: 2
             color: meter.fill
+            Behavior on width { NumberAnimation { duration: Theme.dur; easing.type: Easing.OutCubic } }
         }
     }
 }

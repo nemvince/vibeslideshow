@@ -195,8 +195,11 @@ ApplicationWindow {
                     // nothing to play before a song has been read.
                     property bool usable: studio.workspaceEnabled && studio.songAnalysed
                     opacity: usable ? 1 : 0.45
-                    color: showCtl.playing ? Theme.accent : Theme.panelHi
+                    color: showCtl.playing ? Theme.accent
+                                           : (playHover.hovered ? "#262a2f" : Theme.panelHi)
                     border.color: showCtl.playing ? Theme.accent : Theme.line
+                    Behavior on color { ColorAnimation { duration: Theme.durFast } }
+                    HoverHandler { id: playHover }
                     Text {
                         anchors.centerIn: parent
                         text: showCtl.playing ? "\u275A\u275A" : "\u25B6"
@@ -251,8 +254,6 @@ ApplicationWindow {
 
                 Rectangle { Layout.preferredWidth: 1; implicitHeight: 18; color: Theme.line; Layout.leftMargin: 2; Layout.rightMargin: 2 }
 
-                Rectangle { Layout.preferredWidth: 1; implicitHeight: 16; color: Theme.line; Layout.leftMargin: 2; Layout.rightMargin: 2 }
-
                 // Zoom: 1× fits the whole song, further in the strip scrolls and the
                 // segments get wide enough to show their previews.
                 IconButton {
@@ -276,7 +277,7 @@ ApplicationWindow {
                     onClicked: tl.zoomIn()
                 }
 
-                Rectangle { Layout.preferredWidth: 1; implicitHeight: 16; color: Theme.line; Layout.leftMargin: 2; Layout.rightMargin: 2 }
+                Rectangle { Layout.preferredWidth: 1; implicitHeight: 18; color: Theme.line; Layout.leftMargin: 2; Layout.rightMargin: 2 }
 
                 Text {
                     text: "vol"
@@ -303,6 +304,7 @@ ApplicationWindow {
 
                 SmallButton {
                     text: "Generate"
+                    accent: enabled
                     enabled: !studio.busy && studio.songAnalysed
                     onClicked: studio.generate()
                 }
@@ -374,6 +376,10 @@ ApplicationWindow {
         width: 560
         padding: 18
         closePolicy: Popup.CloseOnEscape
+
+        enter: Transition { NumberAnimation { property: "opacity"; from: 0; to: 1; duration: Theme.dur } }
+        exit: Transition { NumberAnimation { property: "opacity"; from: 1; to: 0; duration: 120 } }
+
         background: Rectangle {
             color: Theme.panel
             radius: Theme.radius
@@ -403,7 +409,7 @@ ApplicationWindow {
                         objectName: "sourceRow"
                         required property var modelData
                         width: dirList.width
-                        height: modelData.isDir ? 40 : 30
+                        height: 40
 
                         Rectangle {
                             anchors {
@@ -418,24 +424,19 @@ ApplicationWindow {
                             border.color: Theme.line
 
                             Column {
-                                anchors {
-                                    fill: parent
-                                    leftMargin: 10
-                                    rightMargin: 10
-                                    topMargin: srcRow.modelData.isDir ? 5 : 0
-                                    bottomMargin: srcRow.modelData.isDir ? 5 : 0
-                                }
+                                anchors { fill: parent; leftMargin: 10; rightMargin: 10 }
+                                topPadding: 5
                                 spacing: 1
                                 Text {
                                     width: parent.width
-                                    text: srcRow.modelData.name
+                                    text: (srcRow.modelData.isDir ? "Folder · " : "File · ")
+                                          + srcRow.modelData.name
                                     color: Theme.ink
                                     font.pixelSize: 12
                                     elide: Text.ElideMiddle
                                 }
                                 Text {
                                     width: parent.width
-                                    visible: srcRow.modelData.isDir
                                     text: srcRow.modelData.path
                                     color: Theme.faint
                                     font.pixelSize: 10

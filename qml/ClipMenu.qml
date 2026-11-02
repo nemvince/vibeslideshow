@@ -27,6 +27,9 @@ Popup {
     focus: true
     closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
 
+    enter: Transition { NumberAnimation { property: "opacity"; from: 0; to: 1; duration: Theme.durFast } }
+    exit: Transition { NumberAnimation { property: "opacity"; from: 1; to: 0; duration: 90 } }
+
     background: Rectangle {
         color: Theme.panelHi
         radius: 10
@@ -113,6 +116,7 @@ Popup {
                     radius: 6
                     color: menu.active === row.index ? Theme.bg
                                                      : (rowHover.hovered ? Theme.bg : "transparent")
+                Behavior on color { ColorAnimation { duration: Theme.durFast } }
                 }
 
                 Text {

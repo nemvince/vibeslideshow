@@ -107,14 +107,17 @@ Item {
     Rectangle {
         anchors.fill: parent
         color: Theme.bg
-        opacity: 0.82
-        visible: stage.locked
+        visible: opacity > 0.01
+        opacity: stage.locked ? 0.82 : 0
+        Behavior on opacity { NumberAnimation { duration: Theme.dur } }
     }
     Column {
         anchors.centerIn: parent
         width: Math.min(parent.width - 60, 420)
         spacing: 8
-        visible: stage.locked
+        visible: opacity > 0.01
+        opacity: stage.locked ? 1 : 0
+        Behavior on opacity { NumberAnimation { duration: Theme.dur } }
         Text {
             anchors.horizontalCenter: parent.horizontalCenter
             text: studio.phase
@@ -137,8 +140,12 @@ Item {
     // Empty state.
     Column {
         anchors.centerIn: parent
-        spacing: 12
-        visible: !showCtl.ready && !stage.locked
+        width: Math.min(parent.width - 60, 460)
+        spacing: 10
+        visible: opacity > 0.01
+        opacity: (!showCtl.ready && !stage.locked) ? 1 : 0
+        Behavior on opacity { NumberAnimation { duration: Theme.dur } }
+
         Text {
             anchors.horizontalCenter: parent.horizontalCenter
             text: studio.songPath.length ? "Ready when you are" : "Load a song to begin"
@@ -147,7 +154,16 @@ Item {
         }
         Text {
             anchors.horizontalCenter: parent.horizontalCenter
-            text: "Pick a look on the right, then press play."
+            width: parent.width
+            horizontalAlignment: Text.AlignHCenter
+            wrapMode: Text.WordWrap
+            // One next step, not three: the empty stage is where a new user is
+            // most likely to stall.
+            text: !studio.songPath.length
+                  ? "Song… in the top bar takes a track; the app finds the beat from there."
+                  : studio.libraryCount === 0
+                    ? "Import some clips into the bin on the left, then press Generate."
+                    : "Press Generate for a first cut, or play to preview what is already there."
             color: Theme.faint
             font.pixelSize: 13
         }
@@ -156,12 +172,15 @@ Item {
     // Nothing playing: a quiet cue, so a black stage is not mistaken for a fault.
     Text {
         anchors.centerIn: parent
-        visible: showCtl.ready && !showCtl.playing && !stage.locked
+        width: parent.width
+        horizontalAlignment: Text.AlignHCenter
+        visible: opacity > 0.01
         text: "space to play"
         color: Theme.faint
-        opacity: 0.7
+        opacity: (showCtl.ready && !showCtl.playing && !stage.locked) ? 0.7 : 0
         font.pixelSize: 11
         font.letterSpacing: 1.5
+        Behavior on opacity { NumberAnimation { duration: Theme.dur } }
     }
 
     // Bottom-left overlay: where the show is, or which segment is selected.
@@ -173,7 +192,9 @@ Item {
         height: 28
         radius: 6
         color: "#99000000"
-        visible: showCtl.ready && (timeline.selected >= 0 || showCtl.currentClip >= 0)
+        visible: opacity > 0.01
+        opacity: (showCtl.ready && (timeline.selected >= 0 || showCtl.currentClip >= 0)) ? 1 : 0
+        Behavior on opacity { NumberAnimation { duration: Theme.durFast } }
         Text {
             id: info
             anchors.centerIn: parent
@@ -192,7 +213,9 @@ Item {
         height: 28
         radius: 6
         color: "#99000000"
-        visible: showCtl.buffering
+        visible: opacity > 0.01
+        opacity: showCtl.buffering ? 1 : 0
+        Behavior on opacity { NumberAnimation { duration: Theme.durFast } }
         Row {
             id: bufferRow
             anchors.centerIn: parent

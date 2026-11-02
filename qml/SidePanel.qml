@@ -83,12 +83,11 @@ Rectangle {
         height: visible ? 42 : 0
         visible: !panel.collapsed
 
-        Text {
+        SectionLabel {
             anchors { left: parent.left; leftMargin: 16; verticalCenter: parent.verticalCenter }
-            text: "TOOLS"
+            text: "Tools"
             color: Theme.dim
             font.pixelSize: 10
-            font.letterSpacing: 1
         }
         Item {
             anchors { right: parent.right; rightMargin: 8; verticalCenter: parent.verticalCenter }
@@ -129,17 +128,7 @@ Rectangle {
         contentHeight: tools.implicitHeight + 14
         clip: true
         boundsBehavior: Flickable.StopAtBounds
-        ScrollBar.vertical: ScrollBar {
-            policy: ScrollBar.AsNeeded
-            width: 6
-            background: Item {}
-            contentItem: Rectangle {
-                implicitWidth: 4
-                radius: 2
-                color: Theme.faint
-                opacity: parent.pressed ? 0.9 : 0.3
-            }
-        }
+        ScrollBar.vertical: ThinScrollBar {}
 
         ColumnLayout {
             id: tools

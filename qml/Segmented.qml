@@ -27,9 +27,12 @@ Item {
                                    / Math.max(1, seg.options.length))
                 height: strip.height
                 radius: 6
-                color: on ? Theme.panelHi : "transparent"
+                color: on ? Theme.panelHi : (hover.hovered ? Theme.panel : "transparent")
                 border.color: on ? Theme.accent : Theme.line
                 border.width: 1
+
+                Behavior on color { ColorAnimation { duration: Theme.durFast } }
+                Behavior on border.color { ColorAnimation { duration: Theme.durFast } }
 
                 Text {
                     anchors.centerIn: parent
@@ -37,6 +40,7 @@ Item {
                     horizontalAlignment: Text.AlignHCenter
                     text: modelData.label
                     color: on ? Theme.ink : Theme.dim
+                    Behavior on color { ColorAnimation { duration: Theme.durFast } }
                     font.pixelSize: 11
                     elide: Text.ElideRight
                 }

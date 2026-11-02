@@ -25,6 +25,9 @@ Item {
         border.color: picker.open ? Theme.accent : Theme.line
         border.width: 1
 
+        Behavior on color { ColorAnimation { duration: Theme.durFast } }
+        Behavior on border.color { ColorAnimation { duration: Theme.durFast } }
+
         Text {
             objectName: "lookName"
             anchors { left: parent.left; leftMargin: 10; right: chevron.left; rightMargin: 6; verticalCenter: parent.verticalCenter }
@@ -70,6 +73,9 @@ Item {
         }
         width: picker.width
         padding: 4
+
+        enter: Transition { NumberAnimation { property: "opacity"; from: 0; to: 1; duration: Theme.durFast } }
+        exit: Transition { NumberAnimation { property: "opacity"; from: 1; to: 0; duration: 90 } }
         implicitHeight: Math.min(list.contentHeight + 8, 360)
         background: Rectangle {
             color: Theme.panelHi
@@ -115,6 +121,7 @@ Item {
                     height: 30
                     radius: 5
                     color: rowHover.hovered ? Theme.bg : "transparent"
+                    Behavior on color { ColorAnimation { duration: Theme.durFast } }
 
                     Text {
                         anchors { left: parent.left; leftMargin: 8; right: del.left; rightMargin: 6; verticalCenter: parent.verticalCenter }

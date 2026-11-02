@@ -16,12 +16,16 @@ Switch {
         color: sw.checked ? Theme.accent : Theme.panelHi
         border.color: sw.checked ? Theme.accent : Theme.line
 
+        Behavior on color { ColorAnimation { duration: Theme.durFast } }
+        Behavior on border.color { ColorAnimation { duration: Theme.durFast } }
+
         Rectangle {
             width: 8; height: 8; radius: 4
             y: 2
             x: sw.checked ? parent.width - width - 2 : 2
             color: sw.checked ? Theme.ink : Theme.faint
-            Behavior on x { NumberAnimation { duration: 110 } }
+            Behavior on x { NumberAnimation { duration: 110; easing.type: Easing.OutCubic } }
+            Behavior on color { ColorAnimation { duration: Theme.durFast } }
         }
     }
     contentItem: Item {}

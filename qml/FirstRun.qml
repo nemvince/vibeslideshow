@@ -21,6 +21,9 @@ Popup {
     padding: 20
     closePolicy: Popup.CloseOnEscape
 
+    enter: Transition { NumberAnimation { property: "opacity"; from: 0; to: 1; duration: Theme.dur } }
+    exit: Transition { NumberAnimation { property: "opacity"; from: 1; to: 0; duration: 120 } }
+
     readonly property bool ready: studio.songPath.length > 0 && studio.sources.length > 0
     // A restored session: say so, and let one button carry the whole thing.
     readonly property bool remembered: studio.songPath.length > 0 || studio.sources.length > 0
@@ -126,7 +129,17 @@ Popup {
                 delegate: Item {
                     required property var modelData
                     width: dirList.width
-                    height: 24
+                    height: 26
+
+                    Rectangle {
+                        anchors.fill: parent
+                        anchors.leftMargin: -6
+                        anchors.rightMargin: -4
+                        radius: 5
+                        color: srcHover.hovered ? Theme.panelHi : "transparent"
+                        Behavior on color { ColorAnimation { duration: Theme.durFast } }
+                    }
+                    HoverHandler { id: srcHover }
 
                     Text {
                         anchors { left: parent.left; right: drop.left; rightMargin: 8; verticalCenter: parent.verticalCenter }
