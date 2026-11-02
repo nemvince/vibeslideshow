@@ -111,6 +111,7 @@ public:
     Q_INVOKABLE void openFolderDialog();
     Q_INVOKABLE void openSongDialog();
 
+
 signals:
     void videoDirsChanged();
     void songChanged();
@@ -130,6 +131,7 @@ signals:
     void volumeChanged();
     void folderDialogRequested();
     void songDialogRequested();
+
 
 private:
     void reloadLibraryModel();
@@ -175,4 +177,5 @@ private:
     QElapsedTimer m_phaseClock;
     int m_phaseTotal = 0;
     QVariantMap m_profiles;
+
 };
