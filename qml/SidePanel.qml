@@ -3,75 +3,96 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import Vibes 1.0
 
-// The settings panel: what the edit looks like (one preset dropdown), which
-// footage it draws from (the filters), saved looks, and the raw parameters.
-// Collapsible sections keep it short; the prose that used to fill preset cards
-// is now the one-line caption under the dropdown.
+// The settings panel: what the edit looks like (one preset picker), which footage
+// it draws from (the filters), saved looks, and the raw parameters. Collapsible
+// sections keep it short; the prose that used to fill preset cards is now the
+// caption under the picker.
 Rectangle {
     id: panel
     color: Theme.panel
     property bool collapsed: false
-    implicitWidth: collapsed ? 34 : 340
+    implicitWidth: collapsed ? 36 : 336
 
     Behavior on implicitWidth { NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
 
     Rectangle { anchors.left: parent.left; width: 1; height: parent.height; color: Theme.line }
 
-    // Collapse handle.
-    Rectangle {
-        anchors { left: parent.left; top: parent.top; margins: 1 }
-        width: 28; height: 28
-        radius: 6
-        color: handle.containsMouse ? Theme.panelHi : "transparent"
-        z: 2
+    // ---- header ---------------------------------------------------------
+    Item {
+        id: panelHeader
+        anchors { top: parent.top; left: parent.left; right: parent.right }
+        height: visible ? 42 : 0
+        visible: !panel.collapsed
+
         Text {
-            anchors.centerIn: parent
-            text: panel.collapsed ? "‹" : "›"
+            anchors { left: parent.left; leftMargin: 16; verticalCenter: parent.verticalCenter }
+            text: "SETTINGS"
             color: Theme.dim
-            font.pixelSize: 16
+            font.pixelSize: 10
+            font.letterSpacing: 1
         }
-        MouseArea {
-            id: handle
-            anchors.fill: parent
-            hoverEnabled: true
-            cursorShape: Qt.PointingHandCursor
-            onClicked: panel.collapsed = !panel.collapsed
+        Item {
+            anchors { right: parent.right; rightMargin: 8; verticalCenter: parent.verticalCenter }
+            width: 30; height: 30
+            Text {
+                anchors.centerIn: parent
+                text: "›"
+                color: collapseHover.hovered ? Theme.ink : Theme.faint
+                font.pixelSize: 16
+            }
+            HoverHandler { id: collapseHover }
+            MouseArea {
+                anchors.fill: parent
+                cursorShape: Qt.PointingHandCursor
+                onClicked: panel.collapsed = true
+            }
+        }
+        Rectangle {
+            anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
+            height: 1
+            color: Theme.line
         }
     }
 
+    // ---- sections -------------------------------------------------------
     Flickable {
-        anchors { fill: parent; leftMargin: 12; rightMargin: 12; topMargin: 10; bottomMargin: 10 }
+        anchors {
+            top: panelHeader.bottom
+            left: parent.left
+            right: parent.right
+            bottom: parent.bottom
+            leftMargin: 16
+            rightMargin: 16
+            topMargin: 4
+        }
         visible: !panel.collapsed
-        contentHeight: body.implicitHeight
+        contentHeight: body.implicitHeight + 12
         clip: true
         boundsBehavior: Flickable.StopAtBounds
-        ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+        ScrollBar.vertical: ScrollBar {
+            policy: ScrollBar.AsNeeded
+            width: 6
+            background: Item {}
+            contentItem: Rectangle {
+                implicitWidth: 4
+                radius: 2
+                color: Theme.faint
+                opacity: parent.pressed ? 0.9 : 0.3
+            }
+        }
 
         ColumnLayout {
             id: body
             width: parent.width
-            spacing: 6
+            spacing: 4
 
-            // ---- look ------------------------------------------------------
+            // ---- look ---------------------------------------------------
             PanelSection {
                 title: "Look"
+                Layout.topMargin: 6
 
-                ComboBox {
-                    id: presetCombo
+                LookPicker {
                     Layout.fillWidth: true
-                    implicitHeight: 32
-                    font.pixelSize: 12
-                    model: studio.presets
-                    textRole: "name"
-                    // Follow the active look until the user picks one themselves.
-                    Binding {
-                        target: presetCombo
-                        property: "currentIndex"
-                        value: Math.max(0, studio.presets.findIndex(function (p) { return p.active }))
-                        when: !presetCombo.pressed && !presetCombo.popup.visible
-                        restoreMode: Binding.RestoreBindingOrValue
-                    }
-                    onActivated: studio.applyPreset(studio.presets[index].name)
                 }
 
                 Text {
@@ -79,29 +100,35 @@ Rectangle {
                     wrapMode: Text.WordWrap
                     color: Theme.dim
                     font.pixelSize: 11
+                    lineHeight: 1.25
                     text: {
                         const i = studio.presets.findIndex(function (p) { return p.active })
-                        return i >= 0 ? studio.presets[i].blurb : "Hand-tuned look"
+                        return i >= 0 ? studio.presets[i].blurb : "A hand-tuned look."
                     }
                 }
 
                 RowLayout {
                     Layout.fillWidth: true
-                    spacing: 6
+                    Layout.topMargin: 2
+                    spacing: 8
                     Text {
                         Layout.fillWidth: true
                         text: studio.lookSummary
                         color: Theme.faint
-                        font.pixelSize: 10
+                        font.pixelSize: 11
                         elide: Text.ElideRight
                     }
-                    SmallButton { text: "Reset"; onClicked: studio.restoreDefaults() }
+                    SmallButton {
+                        text: "Reset"
+                        flat: true
+                        onClicked: studio.restoreDefaults()
+                    }
                 }
             }
 
-            Rectangle { Layout.fillWidth: true; height: 1; color: Theme.line }
+            Rectangle { Layout.fillWidth: true; height: 1; color: Theme.line; Layout.topMargin: 8; Layout.bottomMargin: 4 }
 
-            // ---- footage ---------------------------------------------------
+            // ---- footage ------------------------------------------------
             PanelSection {
                 title: "Footage"
 
@@ -129,14 +156,9 @@ Rectangle {
                     checked: studio.filters.dayOn === true
                     onToggled: studio.setFilter("dayOn", checked)
                 }
-                ComboBox {
-                    visible: studio.filters.dayOn === true
+                DayPicker {
                     Layout.fillWidth: true
-                    implicitHeight: 28
-                    font.pixelSize: 11
-                    model: studio.days
-                    currentIndex: Math.max(0, studio.days.indexOf(studio.filters.day))
-                    onActivated: studio.setFilter("day", studio.days[index])
+                    visible: studio.filters.dayOn === true
                 }
                 FilterRow {
                     Layout.fillWidth: true
@@ -147,13 +169,14 @@ Rectangle {
                 RowLayout {
                     visible: studio.filters.todOn === true
                     Layout.fillWidth: true
-                    spacing: 6
+                    Layout.leftMargin: 2
+                    spacing: 8
                     Text { text: "from"; color: Theme.faint; font.pixelSize: 10 }
-                    Slider {
+                    DarkSlider {
                         id: fromS
                         Layout.fillWidth: true
-                        implicitHeight: 20
                         from: 0; to: 24; stepSize: 1
+                        fillColor: Theme.dim
                         Binding {
                             target: fromS
                             property: "value"
@@ -164,11 +187,11 @@ Rectangle {
                         onMoved: studio.setFilter("todFrom", value)
                     }
                     Text { text: "to"; color: Theme.faint; font.pixelSize: 10 }
-                    Slider {
+                    DarkSlider {
                         id: toS
                         Layout.fillWidth: true
-                        implicitHeight: 20
                         from: 0; to: 24; stepSize: 1
+                        fillColor: Theme.dim
                         Binding {
                             target: toS
                             property: "value"
@@ -181,15 +204,16 @@ Rectangle {
                 }
                 Text {
                     Layout.fillWidth: true
+                    Layout.topMargin: 2
                     text: studio.poolCount + " of " + studio.libraryCount + " clips in the pool"
                     color: Theme.faint
-                    font.pixelSize: 10
+                    font.pixelSize: 11
                 }
             }
 
-            Rectangle { Layout.fillWidth: true; height: 1; color: Theme.line }
+            Rectangle { Layout.fillWidth: true; height: 1; color: Theme.line; Layout.topMargin: 8; Layout.bottomMargin: 4 }
 
-            // ---- saved looks -----------------------------------------------
+            // ---- saved looks --------------------------------------------
             PanelSection {
                 title: "Saved looks"
                 expanded: false
@@ -250,9 +274,9 @@ Rectangle {
                 }
             }
 
-            Rectangle { Layout.fillWidth: true; height: 1; color: Theme.line }
+            Rectangle { Layout.fillWidth: true; height: 1; color: Theme.line; Layout.topMargin: 8; Layout.bottomMargin: 4 }
 
-            // ---- advanced --------------------------------------------------
+            // ---- advanced ------------------------------------------------
             PanelSection {
                 title: "Advanced"
                 expanded: false
@@ -264,9 +288,9 @@ Rectangle {
                         required property int index
                         required property var model
                         Layout.fillWidth: true
-                        spacing: 2
-                        topPadding: 3
-                        bottomPadding: 3
+                        spacing: 3
+                        topPadding: 2
+                        bottomPadding: 2
 
                         RowLayout {
                             Layout.fillWidth: true
@@ -274,7 +298,7 @@ Rectangle {
                                 Layout.fillWidth: true
                                 text: advRow.model.label
                                 color: Theme.dim
-                                font.pixelSize: 10
+                                font.pixelSize: 11
                                 elide: Text.ElideRight
                             }
                             Text {
@@ -285,14 +309,14 @@ Rectangle {
                                 font.family: "monospace"
                             }
                         }
-                        Slider {
+                        DarkSlider {
                             visible: advRow.model.kind === "number"
                             Layout.fillWidth: true
-                            implicitHeight: 20
                             from: advRow.model.min
                             to: advRow.model.max
                             stepSize: advRow.model.step
                             value: advRow.model.value
+                            fillColor: Theme.dim
                             onMoved: studio.setParam(advRow.model.key, value)
                         }
                         Switch {
@@ -314,18 +338,38 @@ Rectangle {
                 }
             }
 
-            Item { Layout.fillHeight: true; implicitHeight: 8 }
+            Item { Layout.fillHeight: true; implicitHeight: 12 }
         }
     }
 
-    // Collapsed state: a single vertical cue instead of an empty bar.
-    Text {
-        anchors.centerIn: parent
+    // ---- collapsed ------------------------------------------------
+    Item {
+        anchors.fill: parent
         visible: panel.collapsed
-        text: "Settings"
-        rotation: 90
-        color: Theme.faint
-        font.pixelSize: 11
-        font.letterSpacing: 1
+
+        Text {
+            anchors.centerIn: parent
+            text: "SETTINGS"
+            rotation: 90
+            color: Theme.faint
+            font.pixelSize: 10
+            font.letterSpacing: 1
+        }
+        Item {
+            anchors { top: parent.top; left: parent.left; right: parent.right }
+            height: 34
+            Text {
+                anchors.centerIn: parent
+                text: "‹"
+                color: expandHover.hovered ? Theme.ink : Theme.faint
+                font.pixelSize: 16
+            }
+            HoverHandler { id: expandHover }
+            MouseArea {
+                anchors.fill: parent
+                cursorShape: Qt.PointingHandCursor
+                onClicked: panel.collapsed = false
+            }
+        }
     }
 }

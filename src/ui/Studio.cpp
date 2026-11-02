@@ -155,12 +155,17 @@ Studio::Studio(QObject *parent) : QObject(parent) {
         persist();
     });
     connect(m_lib, &Library::scanProgress, this, [this](int done, int total) {
-        setStatus(QStringLiteral("Scanning footage… %1/%2").arg(done).arg(total));
+        // A progress event can still be queued when the pass finishes; do not let
+        // it overwrite the "N clips ready" message with a stale "Scanning…".
+        if (busy()) setStatus(QStringLiteral("Scanning footage… %1/%2").arg(done).arg(total));
         noteProgress(done, total);
     });
     connect(m_lib, &Library::scoringProgress, this, [this](int done, int total) { noteProgress(done, total); });
+    connect(m_lib, &Library::busyChanged, this, [this]() {
+        emit busyChanged();
+        emit progressChanged();
+    });
     connect(m_lib, &Library::scoringFinished, this, [this]() {
-        setBusy(false);
         setStatus(QStringLiteral("%1 clips ready").arg(m_lib->clips().size()));
         reloadLibraryModel();
         emit libraryChanged();
@@ -178,10 +183,7 @@ Studio::Studio(QObject *parent) : QObject(parent) {
             generate();
         }
     });
-    connect(m_lib, &Library::failed, this, [this](const QString &m) {
-        setBusy(false);
-        setStatus(m);
-    });
+    connect(m_lib, &Library::failed, this, [this](const QString &m) { setStatus(m); });
 
     connect(m_timeline, &TimelineModel::changed, this, [this]() {
         syncScheduler();
@@ -231,7 +233,6 @@ void Studio::restoreSession() {
         emit filtersChanged();
     }
     if (!m_dirs.isEmpty()) {
-        setBusy(true);
         setStatus(QStringLiteral("Indexing %1 folder(s)…").arg(m_dirs.size()));
         m_lib->setDirs(m_dirs);
         m_lib->startIndex();
@@ -318,25 +319,35 @@ void Studio::setStatus(const QString &s) {
     emit statusChanged();
 }
 
-void Studio::setBusy(bool b) {
-    if (m_busy == b) return;
-    m_busy = b;
+void Studio::setSongBusy(bool b) {
+    if (m_songBusy == b) return;
+    m_songBusy = b;
     emit busyChanged();
+}
+
+bool Studio::busy() const {
+    return m_songBusy || (m_lib && m_lib->busy());
 }
 
 int Studio::scoreDone() const { return m_lib ? m_lib->scoreDone() : 0; }
 int Studio::scoreTotal() const { return m_lib ? m_lib->scoreTotal() : 0; }
 
 double Studio::progress() const {
-    if (!m_lib) return 0;
-    // Scanning comes first, then scoring; report whichever is running.
-    if (m_lib->scoreTotal() > 0) return double(m_lib->scoreDone()) / double(m_lib->scoreTotal());
-    if (m_lib->scanTotal() > 0) return double(m_lib->scanDone()) / double(m_lib->scanTotal());
-    return 0;
+    // Negative means "working, no total yet": the line sweeps instead of sitting
+    // at zero, which is indistinguishable from a stuck app.
+    if (!busy() || !m_lib) return -1;
+    // A phase that has counted nothing yet is "unknown", not "0%": the bar sweeps
+    // instead of drawing a sliver, which is what made it look absent.
+    if (m_lib->scoreTotal() > 0 && m_lib->scoreDone() > 0)
+        return qBound(0.0, double(m_lib->scoreDone()) / double(m_lib->scoreTotal()), 1.0);
+    if (m_lib->scoreTotal() > 0) return -1;
+    if (m_lib->scanTotal() > 0 && m_lib->scanDone() > 0)
+        return qBound(0.0, double(m_lib->scanDone()) / double(m_lib->scanTotal()), 1.0);
+    return -1;
 }
 
 QString Studio::progressLabel() const {
-    if (!m_lib || !m_busy) return {};
+    if (!m_lib || !busy()) return {};
     if (m_lib->scoreTotal() > 0)
         return QStringLiteral("Scoring %1 of %2%3")
             .arg(m_lib->scoreDone()).arg(m_lib->scoreTotal())
@@ -387,12 +398,10 @@ void Studio::startIndexing(const QStringList &dirs) {
     if (m_dirs.isEmpty()) {
         m_lib->setDirs(QStringList());
         m_lib->reset();
-        setBusy(false);
         setStatus(QStringLiteral("Add a footage folder to begin"));
         persist();
         return;
     }
-    setBusy(true);
     setStatus(QStringLiteral("Indexing %1 folder(s)…").arg(m_dirs.size()));
     m_lib->setDirs(m_dirs);
     m_lib->startIndex();
@@ -433,7 +442,6 @@ void Studio::removeFolder(const QString &dir) {
         m_lib->setDirs(QStringList());
         m_lib->reset();
         m_pendingRegenerate = false;
-        setBusy(false);
         setStatus(QStringLiteral("Add a footage folder to begin"));
         emit libraryChanged();
         emit filtersChanged();
@@ -500,7 +508,7 @@ void Studio::loadSongFile(const QString &path) {
     const int gen = ++m_songGen;
     emit songChanged();
     emit analysisChanged();
-    setBusy(true);
+    setSongBusy(true);
     setStatus(QStringLiteral("Listening to the song…"));
 
     // Decoding, beat detection and the duration probe all shell out; none of it
@@ -521,7 +529,7 @@ void Studio::loadSongFile(const QString &path) {
         }
         QMetaObject::invokeMethod(this, [this, a, ok, err, path, dur, gen]() {
             if (gen != m_songGen) return;   // a newer song already won
-            setBusy(false);
+            setSongBusy(false);
             if (!ok) {
                 setStatus(QStringLiteral("Could not read %1").arg(err));
                 return;
@@ -699,7 +707,7 @@ void Studio::generate() {
     // yet holds it back. Waiting for scoring over a network share looked exactly
     // like the app doing nothing.
     if (!m_lib || m_lib->clips().isEmpty()) {
-        m_pendingRegenerate = m_lib && m_lib->busy();
+        m_pendingRegenerate = busy();
         setStatus(m_pendingRegenerate ? QStringLiteral("Scanning footage…") : QStringLiteral("Add a footage folder first"));
         return;
     }

@@ -10,7 +10,7 @@ Rectangle {
     implicitWidth: 46
     implicitHeight: 16
     radius: 3
-    color: "#00000066"
+    color: "#66000000"
 
     Rectangle {
         height: parent.height

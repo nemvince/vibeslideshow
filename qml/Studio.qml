@@ -24,7 +24,7 @@ ApplicationWindow {
     Rectangle {
         id: topBar
         anchors { top: parent.top; left: parent.left; right: parent.right }
-        height: 56
+        height: 62
         color: Theme.panel
 
         RowLayout {
@@ -48,33 +48,41 @@ ApplicationWindow {
                 }
             }
 
-            Rectangle { width: 1; height: 22; color: Theme.line }
+            Rectangle { width: 1; height: 20; color: Theme.line }
 
-            Text {
-                text: studio.songName.length ? studio.songName : "No song loaded"
-                color: studio.songName.length ? Theme.ink : Theme.faint
-                font.pixelSize: 13
-                elide: Text.ElideRight
-                Layout.maximumWidth: 320
+            // Song: name, then what the analyser made of it, then status. Each is
+            // its own column so they never jam together.
+            Column {
                 Layout.alignment: Qt.AlignVCenter
+                spacing: 2
+                Text {
+                    text: studio.songName.length ? studio.songName : "No song loaded"
+                    color: studio.songName.length ? Theme.ink : Theme.faint
+                    font.pixelSize: 13
+                    elide: Text.ElideRight
+                    width: Math.min(implicitWidth, 280)
+                }
+                Text {
+                    text: studio.songAnalysed ? studio.songSummary : " "
+                    visible: text.trim().length > 0
+                    color: Theme.faint
+                    font.pixelSize: 10
+                    elide: Text.ElideRight
+                    width: Math.min(implicitWidth, 280)
+                    height: 12
+                }
             }
-            Text {
-                text: studio.songAnalysed ? studio.songSummary : ""
-                visible: text.length > 0
-                color: Theme.dim
-                font.pixelSize: 12
-                elide: Text.ElideRight
-                Layout.maximumWidth: 300
-                Layout.alignment: Qt.AlignVCenter
-            }
+
+            Rectangle { width: 1; height: 20; color: Theme.line; visible: studio.status.length > 0 }
+
             // While a pass runs this slot carries the live progress + ETA;
             // otherwise it carries whatever the app last said.
             Text {
                 text: studio.busy ? studio.progressLabel : studio.status
                 color: studio.busy ? Theme.dim : Theme.faint
-                font.pixelSize: 12
+                font.pixelSize: 11
                 elide: Text.ElideRight
-                Layout.maximumWidth: 320
+                Layout.maximumWidth: 300
                 Layout.alignment: Qt.AlignVCenter
             }
 
@@ -83,8 +91,9 @@ ApplicationWindow {
             Text {
                 text: studio.libraryCount + " clips · " + studio.poolCount + " in pool"
                 color: Theme.dim
-                font.pixelSize: 12
+                font.pixelSize: 11
                 Layout.alignment: Qt.AlignVCenter
+                Layout.rightMargin: 4
             }
 
             SmallButton {
@@ -99,32 +108,13 @@ ApplicationWindow {
 
         Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: Theme.line }
 
-        // Indexing progress: a hairline that fills while files are scanned and
-        // scored. Before the first file is probed there is no total yet, so it
-        // sweeps instead of sitting at zero, which would read as "stuck".
-        Rectangle {
-            id: progressTrack
+        // Indexing progress: always drawn while the library is working, so a
+        // slow scan has something moving on screen from the first second. It
+        // sits on the top bar's own bottom edge; nothing reflows when it appears.
+        ProgressLine {
             anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
-            height: 3
-            visible: studio.busy
-            color: Theme.bg
-            clip: true
-
-            Rectangle {
-                id: progressFill
-                width: studio.progress > 0 ? parent.width * Math.min(1, studio.progress)
-                                           : parent.width * 0.22
-                height: parent.height
-                color: Theme.accent
-                Behavior on width { NumberAnimation { duration: 160 } }
-
-                SequentialAnimation on x {
-                    running: studio.busy && studio.progress <= 0
-                    loops: Animation.Infinite
-                    NumberAnimation { from: 0; to: Math.max(0, progressTrack.width - progressFill.width); duration: 900 }
-                    NumberAnimation { from: Math.max(0, progressTrack.width - progressFill.width); to: 0; duration: 900 }
-                }
-            }
+            active: studio.busy
+            value: studio.progress
         }
     }
 
@@ -136,7 +126,7 @@ ApplicationWindow {
         LibraryRail {
             id: rail
             anchors { top: parent.top; bottom: parent.bottom; left: parent.left }
-            width: 288
+            width: 292
         }
 
         // Center: the stage.
@@ -156,7 +146,7 @@ ApplicationWindow {
     Rectangle {
         id: transport
         anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
-        height: 188
+        height: 150
         color: Theme.panel
 
         Rectangle { anchors.top: parent.top; width: parent.width; height: 1; color: Theme.line }
@@ -166,10 +156,10 @@ ApplicationWindow {
             spacing: 10
 
             RowLayout {
-                spacing: 12
+                spacing: 10
 
                 Rectangle {
-                    width: 40; height: 40; radius: 20
+                    width: 38; height: 38; radius: 19
                     color: showCtl.playing ? Theme.accent : Theme.panelHi
                     border.color: showCtl.playing ? Theme.accent : Theme.line
                     Text {
@@ -184,8 +174,9 @@ ApplicationWindow {
                 Text {
                     text: showCtl.positionText
                     color: Theme.ink
-                    font.pixelSize: 13
+                    font.pixelSize: 12
                     font.family: "monospace"
+                    Layout.leftMargin: 2
                 }
 
                 Slider {
@@ -227,7 +218,7 @@ ApplicationWindow {
                                 width: 1; height: 9
                                 x: showCtl.duration > 0 ? cutAt / showCtl.duration * parent.width : 0
                                 y: -3
-                                color: "#ffffff30"
+                                color: "#30ffffff"
                             }
                         }
                     }
@@ -242,60 +233,41 @@ ApplicationWindow {
                 Text {
                     text: showCtl.durationText
                     color: Theme.dim
-                    font.pixelSize: 13
+                    font.pixelSize: 12
                     font.family: "monospace"
                 }
 
+                Rectangle { Layout.preferredWidth: 1; implicitHeight: 18; color: Theme.line; Layout.leftMargin: 2; Layout.rightMargin: 2 }
+
                 // Volume: the song is the master clock, so its level is the one
                 // control that matters while the show plays.
-                Row {
-                    spacing: 4
+                Text {
+                    text: "vol"
+                    color: Theme.faint
+                    font.pixelSize: 10
                     Layout.alignment: Qt.AlignVCenter
-                    Text {
-                        anchors.verticalCenter: parent.verticalCenter
-                        text: "♫"
-                        color: Theme.faint
-                        font.pixelSize: 12
+                }
+                DarkSlider {
+                    id: vol
+                    Layout.preferredWidth: 76
+                    Layout.alignment: Qt.AlignVCenter
+                    from: 0
+                    to: 100
+                    fillColor: Theme.dim
+                    Binding {
+                        target: vol
+                        property: "value"
+                        value: studio.volume
+                        when: !vol.pressed
+                        restoreMode: Binding.RestoreBindingOrValue
                     }
-                    Slider {
-                        id: vol
-                        width: 78
-                        implicitHeight: 18
-                        from: 0
-                        to: 100
-                        Binding {
-                            target: vol
-                            property: "value"
-                            value: studio.volume
-                            when: !vol.pressed
-                            restoreMode: Binding.RestoreBindingOrValue
-                        }
-                        onMoved: studio.volume = value
-                        background: Rectangle {
-                            x: vol.leftPadding
-                            y: vol.topPadding + vol.availableHeight / 2 - height / 2
-                            width: vol.availableWidth
-                            height: 3
-                            radius: 1.5
-                            color: Theme.line
-                            Rectangle {
-                                width: vol.visualPosition * parent.width
-                                height: parent.height
-                                radius: 1.5
-                                color: Theme.dim
-                            }
-                        }
-                        handle: Rectangle {
-                            x: vol.leftPadding + vol.visualPosition * (vol.availableWidth - width)
-                            y: vol.topPadding + vol.availableHeight / 2 - height / 2
-                            width: 10; height: 10; radius: 5
-                            color: Theme.ink
-                        }
-                    }
+                    onMoved: studio.volume = value
                 }
 
+                Rectangle { Layout.preferredWidth: 1; implicitHeight: 18; color: Theme.line; Layout.leftMargin: 2; Layout.rightMargin: 2 }
+
                 SmallButton { text: "Regenerate"; onClicked: studio.generate() }
-                SmallButton { text: "Stop"; onClicked: studio.stopShow() }
+                SmallButton { text: "Stop"; flat: true; onClicked: studio.stopShow() }
             }
 
             // The strip: segments with real thumbnails, selectable for editing.
@@ -314,7 +286,17 @@ ApplicationWindow {
                     contentWidth: Math.max(width, stripRow.width)
                     contentHeight: height
                     flickableDirection: Flickable.HorizontalFlick
-                    ScrollBar.horizontal: ScrollBar { policy: ScrollBar.AsNeeded }
+                    ScrollBar.horizontal: ScrollBar {
+                        policy: ScrollBar.AsNeeded
+                        height: 6
+                        background: Item {}
+                        contentItem: Rectangle {
+                            implicitHeight: 4
+                            radius: 2
+                            color: Theme.faint
+                            opacity: parent.pressed ? 0.9 : 0.35
+                        }
+                    }
 
                     Row {
                         id: stripRow
@@ -333,6 +315,8 @@ ApplicationWindow {
                                        ? Math.max(8, model.segLen / showCtl.duration * Math.max(600, stripFlick.width))
                                        : 20
 
+                                readonly property bool showThumb: width >= 26
+
                                 Rectangle {
                                     id: cellBg
                                     anchors.fill: parent
@@ -346,17 +330,18 @@ ApplicationWindow {
                                     Image {
                                         anchors.fill: parent
                                         anchors.margins: 2
+                                        visible: cell.showThumb
                                         fillMode: Image.PreserveAspectCrop
                                         asynchronous: true
                                         cache: true
-                                        source: model.segThumb ? "file://" + model.segThumb : ""
+                                        source: model.segThumb && cell.showThumb ? "file://" + model.segThumb : ""
                                         opacity: 0.85
                                     }
                                     Rectangle {
                                         anchors.fill: parent
                                         anchors.margins: 2
                                         color: model.segColor
-                                        opacity: model.segThumb ? 0 : 0.5
+                                        opacity: model.segThumb && cell.showThumb ? 0 : 0.45
                                     }
                                     Rectangle {
                                         anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
@@ -388,37 +373,36 @@ ApplicationWindow {
                 }
             }
 
-            // Editing row: appears only when a segment is selected, so it never
-            // competes with the empty state.
+            // Editing row: the controls stay put and disable themselves, so the
+            // strip never jumps when a segment is selected.
             RowLayout {
                 Layout.fillWidth: true
                 spacing: 8
-                visible: timeline.selected >= 0
 
                 Text {
-                    text: timeline.selectionInfo
-                    color: Theme.dim
-                    font.pixelSize: 12
+                    text: timeline.selected >= 0 ? timeline.selectionInfo : (timeline.hasTimeline ? "Select a segment to edit it" : "No edit yet")
+                    color: timeline.selected >= 0 ? Theme.dim : Theme.faint
+                    font.pixelSize: 11
                     elide: Text.ElideRight
                     Layout.fillWidth: true
                 }
                 Item { Layout.preferredWidth: 4 }
-                SmallButton { text: "Shorten"; onClicked: timeline.shorten() }
-                SmallButton { text: "Lengthen"; onClicked: timeline.lengthen() }
-                SmallButton { text: "Chop"; onClicked: timeline.chop() }
-                SmallButton { text: "New in-point"; onClicked: timeline.rerollIn() }
-                SmallButton { text: "Swap clip"; onClicked: timeline.swap() }
-                SmallButton { text: "Delete"; onClicked: timeline.remove() }
-                SmallButton { text: "Re-roll all"; onClicked: timeline.rerollAll() }
+                SmallButton { text: "Shorten"; enabled: timeline.selected >= 0; onClicked: timeline.shorten() }
+                SmallButton { text: "Lengthen"; enabled: timeline.selected >= 0; onClicked: timeline.lengthen() }
+                SmallButton { text: "Chop"; enabled: timeline.selected >= 0; onClicked: timeline.chop() }
+                SmallButton { text: "New in-point"; enabled: timeline.selected >= 0; onClicked: timeline.rerollIn() }
+                SmallButton { text: "Swap clip"; enabled: timeline.selected >= 0; onClicked: timeline.swap() }
+                SmallButton { text: "Delete"; enabled: timeline.selected >= 0; onClicked: timeline.remove() }
+                SmallButton { text: "Re-roll all"; enabled: timeline.count > 0; onClicked: timeline.rerollAll() }
+                Text {
+                    text: timeline.stats
+                    color: Theme.faint
+                    font.pixelSize: 11
+                    Layout.leftMargin: 6
+                }
             }
 
-            Text {
-                Layout.fillWidth: true
-                visible: timeline.selected < 0
-                text: timeline.stats
-                color: Theme.faint
-                font.pixelSize: 12
-            }
+
         }
     }
 
@@ -538,18 +522,12 @@ ApplicationWindow {
                         color: Theme.faint
                         font.pixelSize: 11
                     }
-                    Rectangle {
-                        width: 160
-                        height: 3
-                        radius: 1.5
+                    ProgressLine {
+                        width: 170
+                        height: 4
                         visible: studio.busy
-                        color: Theme.line
-                        Rectangle {
-                            width: parent.width * Math.max(0, Math.min(1, studio.progress))
-                            height: parent.height
-                            radius: 1.5
-                            color: Theme.accent
-                        }
+                        active: studio.busy
+                        value: studio.progress
                     }
                 }
                 Row {

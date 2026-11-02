@@ -80,13 +80,24 @@ Item {
         }
     }
 
+    // Nothing playing: a quiet cue, so a black stage is not mistaken for a fault.
+    Text {
+        anchors.centerIn: parent
+        visible: showCtl.ready && !showCtl.playing
+        text: "space to play"
+        color: Theme.faint
+        opacity: 0.7
+        font.pixelSize: 11
+        font.letterSpacing: 1.5
+    }
+
     // Bottom-left overlay: where the show is, or which segment is selected.
     Rectangle {
         anchors { left: parent.left; bottom: parent.bottom; margins: 14 }
         width: info.implicitWidth + 20
         height: 28
         radius: 6
-        color: "#00000099"
+        color: "#99000000"
         visible: showCtl.ready
         Text {
             id: info
@@ -105,7 +116,7 @@ Item {
         width: bufferRow.implicitWidth + 22
         height: 28
         radius: 6
-        color: "#00000099"
+        color: "#99000000"
         visible: showCtl.buffering
         Row {
             id: bufferRow

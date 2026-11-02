@@ -56,7 +56,17 @@ Rectangle {
             model: clips
             spacing: 4
             cacheBuffer: 800
-            ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+            ScrollBar.vertical: ScrollBar {
+                policy: ScrollBar.AsNeeded
+                width: 6
+                background: Item {}
+                contentItem: Rectangle {
+                    implicitWidth: 4
+                    radius: 2
+                    color: Theme.faint
+                    opacity: parent.pressed ? 0.9 : 0.3
+                }
+            }
 
             delegate: Item {
                 id: row

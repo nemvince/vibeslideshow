@@ -54,7 +54,10 @@ public:
     QString songName() const;
     bool songAnalysed() const { return m_analysis.valid(); }
     QString songSummary() const;
-    bool busy() const { return m_busy; }
+    // Derived: the library is scanning/scoring, or a song is being analysed.
+    // One flag shared by both is what used to hide the scan progress behind a
+    // finished analysis.
+    bool busy() const;
     QString status() const { return m_status; }
     int scoreDone() const;
     int scoreTotal() const;
@@ -126,7 +129,7 @@ signals:
 private:
     void reloadLibraryModel();
     void setStatus(const QString &s);
-    void setBusy(bool b);
+    void setSongBusy(bool b);
     void syncScheduler();
     void persist();
     void refreshProfiles();
@@ -151,7 +154,7 @@ private:
     Filters m_filters;
     QString m_activePreset;
     QString m_status;
-    bool m_busy = false;
+    bool m_songBusy = false;
     bool m_pendingRegenerate = false;
     // True when the current edit was cut before scoring finished; it is re-cut
     // once real scores land, unless the user already edited it by hand.

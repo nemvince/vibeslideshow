@@ -235,7 +235,10 @@ Library::ScanOutcome scanDirs(const QStringList &dirs, const std::function<void(
             probed[i] = c;
             ok[i] = readable;
             const int d = ++done;
-            if (progress && (d % 4 == 0 || d == int(files.size()))) progress(d, int(files.size()));
+            // Report early and often: on a network share the first files take a
+            // while, and a bar that only moves every fourth file looks dead.
+            const int totalFiles = int(files.size());
+            if (d <= 8 || d % 4 == 0 || d == totalFiles) progress(d, totalFiles);
         }
     };
 
@@ -366,13 +369,19 @@ const Clip *Library::clipById(int id) const {
     return &m_clips[it.value()];
 }
 
+void Library::setBusyInternal(bool b) {
+    if (m_busy == b) return;
+    m_busy = b;
+    emit busyChanged();
+}
+
 void Library::startIndex() {
     if (m_busy) {
         m_restart = true;
         return;
     }
     m_restart = false;
-    m_busy = true;
+    setBusyInternal(true);
     m_scoreDone = 0;
     m_scoreTotal = 0;
     m_scanDone = 0;
@@ -399,7 +408,7 @@ void Library::startIndex() {
 void Library::reset() {
     // Supersede any pass still in flight: its results are now stale.
     ++m_gen;
-    m_busy = false;
+    setBusyInternal(false);
     m_restart = false;
     m_scoreDone = 0;
     m_scoreTotal = 0;
@@ -422,7 +431,7 @@ void Library::applyIndex(quint64 gen, const ScanOutcome &outcome) {
     }
 
     if (m_clips.isEmpty()) {
-        m_busy = false;
+        setBusyInternal(false);
         // Distinguish "nothing there" from "nothing readable": over a network
         // mount those are very different problems.
         if (outcome.skipped > 0)
@@ -440,7 +449,7 @@ void Library::applyIndex(quint64 gen, const ScanOutcome &outcome) {
 void Library::restartIfPending() {
     if (!m_restart) return;
     m_restart = false;
-    m_busy = false;
+    setBusyInternal(false);
     startIndex();
 }
 
@@ -567,7 +576,7 @@ void Library::applyScores(quint64 gen, const QList<Score> &scores) {
         m_clips[i].dk = scores[i].dk;
         m_clips[i].scored = scores[i].ok;
     }
-    m_busy = false;
+    setBusyInternal(false);
     m_scoreDone = m_scoreTotal;
     emit scoringProgress(m_scoreTotal, m_scoreTotal);
     emit scoringFinished();

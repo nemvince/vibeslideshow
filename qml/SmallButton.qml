@@ -1,25 +1,29 @@
 import QtQuick
+import QtQuick.Controls
 import Vibes 1.0
 
 Rectangle {
     id: btn
     property alias text: label.text
     property bool accent: false
+    // Flat buttons are for secondary actions that should not compete for space.
+    property bool flat: false
     signal clicked()
 
-    implicitWidth: label.implicitWidth + 22
-    implicitHeight: 30
+    implicitWidth: label.implicitWidth + (flat ? 12 : 22)
+    implicitHeight: flat ? 24 : 30
     radius: 7
-    color: accent ? (mouse.containsMouse ? "#ffbe5c" : Theme.accent)
+    color: flat ? (mouse.containsMouse ? Theme.panelHi : "transparent")
+         : accent ? (mouse.containsMouse ? "#ffbe5c" : Theme.accent)
                   : (mouse.containsMouse ? Theme.panelHi : Theme.panel)
-    border.color: accent ? "transparent" : Theme.line
+    border.color: accent && !flat ? "transparent" : flat ? "transparent" : Theme.line
     opacity: enabled ? 1 : 0.42
 
     Text {
         id: label
         anchors.centerIn: parent
-        color: btn.accent ? "#141516" : Theme.ink
-        font.pixelSize: 12
+        color: btn.accent ? "#141516" : btn.flat ? Theme.dim : Theme.ink
+        font.pixelSize: btn.flat ? 11 : 12
     }
     MouseArea {
         id: mouse

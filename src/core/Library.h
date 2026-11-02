@@ -65,6 +65,8 @@ signals:
     // Files probed so far, out of the videos found. A scan over a network mount
     // takes minutes; without this the window looks dead.
     void scanProgress(int done, int total);
+    // True from the start of a scan until scoring settles.
+    void busyChanged();
     void failed(const QString &message);
 
 private:
@@ -80,6 +82,7 @@ private:
     void scoreClips(quint64 gen);
     void applyScores(quint64 gen, const QList<Score> &scores);
     void restartIfPending();
+    void setBusyInternal(bool b);
 
     QStringList m_dirs;
     QList<Clip> m_clips;
