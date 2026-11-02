@@ -130,6 +130,43 @@ void writeCaches(const QStringList &dirs, const QHash<QString, QVariantMap> &cac
 // One video file, probed. Returns false when it cannot be read (network hiccup,
 // unsupported container), so the caller can count it instead of dropping it
 // silently.
+// Capture stamp from the file name, shared by the probe and the cache path.
+void applyStamp(Clip *c, const QString &path) {
+    QString day;
+    double tod = 0;
+    if (stampOf(path, &day, &tod)) { c->day = day; c->tod = tod; c->hasTod = true; }
+}
+
+// A cached probe is only trusted while it describes the same file: same byte size
+// and mtime, and the same proxy (added, removed or replaced invalidates it).
+bool probeCached(const QVariantMap &e, qint64 size, qint64 mtime, const QString &lrf, qint64 lrfSize) {
+    if (e.isEmpty() || e.value(QStringLiteral("pv")).toInt() < 1) return false;
+    if (e.value(QStringLiteral("s")).toLongLong() != size) return false;
+    if (e.value(QStringLiteral("m")).toLongLong() != mtime) return false;
+    if (!(e.value(QStringLiteral("dur")).toDouble() > 0)) return false;
+    if (lrf.isEmpty()) return !e.contains(QStringLiteral("ls"));
+    return e.contains(QStringLiteral("ld")) &&
+           e.value(QStringLiteral("ls")).toLongLong() == lrfSize;
+}
+
+Clip clipFromCache(const QString &path, qint64 size, const QVariantMap &e,
+                   const QString &lrf, qint64 lrfSize) {
+    Clip c;
+    c.path = path;
+    c.ext = extOf(path);
+    c.duration = e.value(QStringLiteral("dur")).toDouble();
+    c.size = size;
+    c.w = e.value(QStringLiteral("w")).toInt();
+    c.h = e.value(QStringLiteral("h")).toInt();
+    if (!lrf.isEmpty()) {
+        c.lrf = lrf;
+        c.lrfDur = e.value(QStringLiteral("ld")).toDouble();
+        c.lrfSize = lrfSize;
+    }
+    applyStamp(&c, path);
+    return c;
+}
+
 // Duration and dimensions in ONE ffprobe run. Asking twice meant opening the
 // same file twice per clip, which on a network mount is two round trips and two
 // chances to time out; the aspect-ratio filter needs the second answer, so the
@@ -173,9 +210,7 @@ bool probeClip(const QString &path, qint64 size, const QHash<QString, QString> &
     c.size = size;
     c.w = w;
     c.h = h;
-    QString day;
-    double tod = 0;
-    if (stampOf(path, &day, &tod)) { c.day = day; c.tod = tod; c.hasTod = true; }
+    applyStamp(&c, path);
 
     const QString lrf = lrfFor.value(stemOf(path));
     if (!lrf.isEmpty()) {
@@ -226,6 +261,12 @@ Library::ScanOutcome scanDirs(const QStringList &dirs, const std::function<void(
         files.append({path, fi.size()});
     }
 
+    // Probe results are cached beside the scores, so a folder that has not changed
+    // since the last scan opens no file at all: not one ffprobe per clip.
+    QHash<QString, QVariantMap> cache;
+    QHash<QString, QString> cachePaths;
+    loadCaches(dirs, &cache, &cachePaths);
+
     // Probe in parallel: every ffprobe over SMB/NFS is a round trip, and running
     // them one by one turns a few hundred clips into a coffee break.
     QList<Clip> probed;
@@ -234,13 +275,65 @@ Library::ScanOutcome scanDirs(const QStringList &dirs, const std::function<void(
     ok.resize(files.size());
     std::atomic<int> next{0};
     std::atomic<int> done{0};
+    std::mutex cacheLock;
+    std::atomic<bool> flushing{false};
+
+    // A scan of a network share can run for minutes; the cache is flushed as it
+    // goes so closing the window early does not throw the probes away.
+    auto flush = [&]() {
+        if (flushing.exchange(true)) return;
+        QHash<QString, QVariantMap> copy;
+        {
+            std::lock_guard<std::mutex> lock(cacheLock);
+            copy = cache;
+        }
+        writeCaches(dirs, copy, cachePaths);
+        flushing = false;
+    };
 
     auto work = [&]() {
         for (;;) {
             const int i = next.fetch_add(1);
             if (i >= int(files.size())) break;
+            const QString path = files[i].path;
+            const qint64 size = files[i].size;
+            const qint64 mtime = qint64(QFileInfo(path).lastModified().toMSecsSinceEpoch());
+            const QString lrf = lrfFor.value(stemOf(path));
+            const qint64 lrfSize = lrf.isEmpty() ? 0 : QFileInfo(lrf).size();
+
+            QVariantMap hit;
+            {
+                std::lock_guard<std::mutex> lock(cacheLock);
+                hit = cache.value(path);
+            }
+
             Clip c;
-            const bool readable = probeClip(files[i].path, files[i].size, lrfFor, &c);
+            bool readable = false;
+            if (probeCached(hit, size, mtime, lrf, lrfSize)) {
+                c = clipFromCache(path, size, hit, lrf, lrfSize);
+                readable = true;
+            } else {
+                readable = probeClip(path, size, lrfFor, &c);
+            }
+            if (readable) {
+                // Merge: the entry may already hold this clip's score.
+                QVariantMap entry = hit;
+                entry[QStringLiteral("pv")] = 1;
+                entry[QStringLiteral("s")] = size;
+                entry[QStringLiteral("m")] = mtime;
+                entry[QStringLiteral("dur")] = c.duration;
+                entry[QStringLiteral("w")] = c.w;
+                entry[QStringLiteral("h")] = c.h;
+                if (!c.lrf.isEmpty()) {
+                    entry[QStringLiteral("ls")] = c.lrfSize;
+                    entry[QStringLiteral("ld")] = c.lrfDur;
+                } else {
+                    entry.remove(QStringLiteral("ls"));
+                    entry.remove(QStringLiteral("ld"));
+                }
+                std::lock_guard<std::mutex> lock(cacheLock);
+                cache.insert(path, entry);
+            }
             probed[i] = c;
             ok[i] = readable;
             const int d = ++done;
@@ -248,6 +341,7 @@ Library::ScanOutcome scanDirs(const QStringList &dirs, const std::function<void(
             // while, and a bar that only moves every fourth file looks dead.
             const int totalFiles = int(files.size());
             if (d <= 8 || d % 4 == 0 || d == totalFiles) progress(d, totalFiles);
+            if (d % 64 == 0) flush();
         }
     };
 
@@ -260,6 +354,7 @@ Library::ScanOutcome scanDirs(const QStringList &dirs, const std::function<void(
         for (int t = 0; t < threads; t++) pool.emplace_back(work);
         for (auto &t : pool) t.join();
     }
+    flush();
 
     Library::ScanOutcome outcome;
     outcome.files = files.size();
@@ -584,7 +679,9 @@ void Library::scoreClips(quint64 gen) {
                     // Unreadable is not "dark": scoring 0 with dk=1 would let the
                     // junk filter silently drop a clip the network failed on.
                     if (!s.ok) { s.score = 0; s.mv = 0; s.dk = 0.25; }
-                    QVariantMap entry;
+                    // Merge into the entry the probe pass left behind: the commit
+                    // must not throw away the duration and dimensions it cached.
+                    QVariantMap entry = hit;
                     entry["s"] = sizeNow;
                     entry["m"] = mtimeNow;
                     if (!c.lrf.isEmpty()) entry["ls"] = c.lrfSize;

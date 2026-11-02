@@ -158,8 +158,10 @@ earlier call, and mpv refuses to run under a comma-decimal locale.
 
 - `~/.config/vibeslideshow/params.json` — folders, song, look, filters
 - `~/.config/vibeslideshow/profiles.json` — saved looks
-- `<footage folder>/.vibeslideshow-score-cache.json` — clip scores, so a rescan
-  is free (`~/.cache/vibeslideshow/` when the folder is read-only)
+- `<footage folder>/.vibeslideshow-score-cache.json` — everything the scan learnt
+  about each clip: duration and dimensions from the probe, plus its score and
+  motion, keyed by byte size + mtime. A rescan of an unchanged folder opens no
+  video at all (`~/.cache/vibeslideshow/` when the folder is read-only)
 - `~/.cache/vibeslideshow/thumbs/` — rail and timeline thumbnails
 
 ## License
