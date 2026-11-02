@@ -79,12 +79,25 @@ copy_deps "$STAGE/ffmpeg.exe"
 copy_deps "$STAGE/ffprobe.exe"
 copy_deps "$STAGE/vibeslideshow.exe"
 
-# windeployqt reasons from the executable, so a dependency that only a plugin needs
-# is left out — the Qt Quick Controls 2 plugin is the classic case. Walk everything
-# that ended up in the bundle and pull its closure in as well.
+# windeployqt reasons from the executable, so a dependency only a *plugin* needs is
+# left out: the Qt Quick Controls 2 plugin links Qt6Widgets, which this app never
+# uses itself. That was the 1.0.0 "plugin qtquickcontrols2plugin not found".
+WIDGETS="$MINGW_PREFIX/bin/Qt6Widgets.dll"
+if [ -f "$WIDGETS" ] && [ ! -f "$STAGE/Qt6Widgets.dll" ]; then
+    cp -f "$WIDGETS" "$STAGE/"
+fi
+
+# Closure over the binaries that matter: the app, the tools, and the QML plugins
+# (module roots and style plugins live at depth 2-3). Walking the whole staged tree
+# was hundreds of ldd calls and took ten minutes.
+bundle_targets() {
+    printf '%s\n' "$STAGE/vibeslideshow.exe" "$STAGE/ffmpeg.exe" "$STAGE/ffprobe.exe"
+    find "$STAGE/qml" -mindepth 2 -maxdepth 3 -name '*.dll' 2>/dev/null
+    find "$STAGE" -maxdepth 1 -name '*.dll'
+}
 while IFS= read -r deployed; do
     copy_deps "$deployed"
-done < <(find "$STAGE" \( -name '*.dll' -o -name '*.exe' \) | sort)
+done < <(bundle_targets | sort -u)
 
 # Nothing may be missing from the bundle: a bare DLL set fails at load time with
 # "plugin not found", which says nothing about the real culprit.
@@ -98,7 +111,7 @@ while IFS= read -r deployed; do
         [ -f "$STAGE/$base" ] ||
             echo "bundle is missing $base (needed by $(basename "$deployed"))" >> "$report"
     done < <(deps_of "$deployed")
-done < <(find "$STAGE" \( -name '*.dll' -o -name '*.exe' \) | sort)
+done < <(bundle_targets | sort -u)
 if [ -s "$report" ]; then
     echo "package-windows: bundle is incomplete:" >&2
     sort -u "$report" | sed 's/^/  /' >&2
