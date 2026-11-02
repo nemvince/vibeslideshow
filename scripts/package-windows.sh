@@ -89,9 +89,19 @@ else
     echo "package-windows: warning: $WIDGETS missing, the Controls plugin may not load" >&2
 fi
 
-# No ldd sweep here: on MSYS2 it costs seconds per file and hung the build. CI runs
-# the deployed bundle with PATH stripped instead, which is the only check that
-# actually proves the DLL set is complete.
+# Assert the pieces this bundle has broken on before, so a regression fails the
+# packaging step with a clear message instead of shipping a dead download.
+for required in \
+    Qt6Widgets.dll \
+    Qt6QuickControls2.dll \
+    qml/QtQuick/Controls/qtquickcontrols2plugin.dll \
+    qml/QtQuick/Controls/qmldir \
+    qml/QtQuick/qmldir; do
+    if [ ! -f "$STAGE/$required" ]; then
+        echo "package-windows: bundle is missing $required" >&2
+        exit 1
+    fi
+done
 
 if command -v 7z >/dev/null 2>&1; then
     7z a -tzip -bso0 -bsp0 "dist/$NAME.zip" "$STAGE" >/dev/null
