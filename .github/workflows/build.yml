@@ -165,11 +165,13 @@ jobs:
       - name: Smoke test the bundle
         run: |
           set -e
-          APP="$(ls -d dist/*.app 2>/dev/null | head -1)"
-          [ -n "$APP" ] || APP="$(ls -d build/*.app | head -1)"
-          echo "== app: $APP"
-          BIN="$APP/Contents/MacOS/vibeslideshow"
-          [ -x "$BIN" ] || { echo "no binary in $APP"; exit 1; }
+          BIN=""
+          for cand in dist/*.app/Contents/MacOS/vibeslideshow build/*.app/Contents/MacOS/vibeslideshow \
+                      dist/vibeslideshow-*-macos/vibeslideshow build/vibeslideshow; do
+            if [ -x "$cand" ]; then BIN="$cand"; break; fi
+          done
+          echo "== artifact binary: $BIN"
+          [ -n "$BIN" ] || { echo "no packaged binary found"; ls dist; exit 1; }
           "$BIN" --version
           "$BIN" > /tmp/bundle.log 2>&1 &
           pid=$!
@@ -280,11 +282,11 @@ jobs:
           cat /tmp/bundle.log
           if [ "$code" -eq 124 ]; then echo "bundle stayed up for 8s: ok"; else
             echo "bundle exited early (code $code)"
-            echo "== bundle root:"; ls "$bundle" | head -40
-            echo "== qml modules:"; ls "$bundle/qml" 2>/dev/null; ls "$bundle/qml/QtQuick" 2>/dev/null | head
-            echo "== platforms:"; ls "$bundle/platforms" 2>/dev/null
-            echo "== offscreen attempt:"
-            ( cd "$bundle" && QT_QPA_PLATFORM=offscreen timeout 8 ./vibeslideshow.exe ) 2>&1 | head -20
+            echo "== native log:"; cat /tmp/bundle.log
+            echo "== stderr forced + plugin debug:"
+            ( cd "$bundle" && QT_FORCE_STDERR_LOGGING=1 QT_DEBUG_PLUGINS=1 timeout 8 ./vibeslideshow.exe ) 2>&1 | tail -40
+            echo "== software quick backend:"
+            ( cd "$bundle" && QT_FORCE_STDERR_LOGGING=1 QT_QUICK_BACKEND=software timeout 8 ./vibeslideshow.exe ) 2>&1 | tail -15
             exit 1
           fi
 
