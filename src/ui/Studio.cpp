@@ -32,8 +32,10 @@ QVariantMap filtersToMap(const Filters &f) {
     m["day"] = f.day;
     m["scoreOn"] = f.scoreOn;
     m["scoreMin"] = f.scoreMin;
+    m["scorePct"] = f.scorePct;
     m["mvOn"] = f.mvOn;
     m["mvMin"] = f.mvMin;
+    m["mvPct"] = f.mvPct;
     m["arOn"] = f.arOn;
     m["ar"] = f.ar;
     m["todOn"] = f.todOn;
@@ -119,8 +121,10 @@ Filters filtersFromMap(const QVariantMap &m) {
     f.day = m.value("day").toString();
     f.scoreOn = m.value("scoreOn", false).toBool();
     f.scoreMin = m.value("scoreMin", 0).toInt();
+    f.scorePct = m.value("scorePct", f.scorePct).toInt();
     f.mvOn = m.value("mvOn", false).toBool();
     f.mvMin = m.value("mvMin", 0).toInt();
+    f.mvPct = m.value("mvPct", f.mvPct).toInt();
     f.arOn = m.value("arOn", false).toBool();
     f.ar = m.value("ar").toDouble();
     f.todOn = m.value("todOn", false).toBool();
@@ -334,7 +338,6 @@ void Studio::loadProfile(const QString &name) {
     emit paramsChanged();
     emit activePresetChanged();
     emit filtersChanged();
-    emit advancedChanged();
     persist();
     setStatus(QStringLiteral("Loaded look “%1”").arg(name));
 }
@@ -638,39 +641,6 @@ void Studio::loadSongFile(const QString &path) {
 
 // ---- params / presets ---------------------------------------------------
 
-QVariantList Studio::presets() const {
-    QVariantList out;
-    for (const Preset &p : builtinPresets()) {
-        QVariantMap card;
-        card["name"] = p.name;
-        card["blurb"] = p.blurb;
-        card["detail"] = p.detail;
-        card["active"] = p.name == m_activePreset;
-        out.append(card);
-    }
-    return out;
-}
-
-QVariantList Studio::advanced() const {
-    QVariantList out;
-    const QVariantMap cur = m_params.toMap();
-    for (const ParamField &f : paramSchema()) {
-        QVariantMap row;
-        row["key"] = f.key;
-        row["label"] = f.label;
-        row["hint"] = f.hint;
-        row["kind"] = f.kind == ParamField::Check ? QStringLiteral("check")
-                     : f.kind == ParamField::Text ? QStringLiteral("text") : QStringLiteral("number");
-        row["min"] = f.min;
-        row["max"] = f.max;
-        row["step"] = f.step;
-        row["unit"] = f.unit;
-        row["value"] = cur.value(f.key);
-        out.append(row);
-    }
-    return out;
-}
-
 QString Studio::lookSummary() const {
     // Plain prose, no numbers unless they are meaningful to a human.
     QString pace;
@@ -696,8 +666,6 @@ void Studio::applyPreset(const QString &name) {
         syncScheduler();
         emit activePresetChanged();
         emit paramsChanged();
-        emit presetsChanged();
-        emit advancedChanged();
         persist();
         setStatus(QStringLiteral("Look: %1").arg(p.blurb));
         return;
@@ -719,7 +687,6 @@ void Studio::setParam(const QString &key, const QVariant &value) {
     }
     syncScheduler();
     emit paramsChanged();
-    emit presetsChanged();
     persist();
 }
 
@@ -730,8 +697,6 @@ void Studio::restoreDefaults() {
     syncScheduler();
     emit activePresetChanged();
     emit paramsChanged();
-    emit presetsChanged();
-    emit advancedChanged();
     persist();
 }
 
@@ -763,14 +728,16 @@ void Studio::setFilter(const QString &key, const QVariant &value) {
     else if (key == QLatin1String("scoreOn")) {
         m_filters.scoreOn = value.toBool();
         // Top-% means the score at the rank boundary, computed over the library.
-        if (m_filters.scoreOn && m_lib) m_filters.scoreMin = m_lib->scoreCutoff(50);
+        if (m_filters.scoreOn && m_lib) m_filters.scoreMin = m_lib->scoreCutoff(m_filters.scorePct);
     } else if (key == QLatin1String("scorePct")) {
-        if (m_lib) m_filters.scoreMin = m_lib->scoreCutoff(d);
+        m_filters.scorePct = qBound(5, int(std::lround(d)), 100);
+        if (m_lib) m_filters.scoreMin = m_lib->scoreCutoff(m_filters.scorePct);
     } else if (key == QLatin1String("mvOn")) {
         m_filters.mvOn = value.toBool();
-        if (m_filters.mvOn && m_lib) m_filters.mvMin = m_lib->mvCutoff(50);
+        if (m_filters.mvOn && m_lib) m_filters.mvMin = m_lib->mvCutoff(m_filters.mvPct);
     } else if (key == QLatin1String("mvPct")) {
-        if (m_lib) m_filters.mvMin = m_lib->mvCutoff(d);
+        m_filters.mvPct = qBound(5, int(std::lround(d)), 100);
+        if (m_lib) m_filters.mvMin = m_lib->mvCutoff(m_filters.mvPct);
     } else if (key == QLatin1String("arOn")) {
         m_filters.arOn = value.toBool();
         if (m_filters.arOn && m_filters.ar == 0) m_filters.ar = 16.0 / 9.0;

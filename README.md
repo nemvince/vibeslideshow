@@ -77,12 +77,22 @@ the code looks next to the binary first (and honours `VIBESLIDESHOW_TOOLS_DIR`).
    first edit for you.
 4. The rail on the left shows every clip with a score; clips the filters exclude
    stay visible but dimmed.
-5. The panel on the right is the settings panel, in collapsible sections: **Look**
-   (the one preset manager: built-in looks, saved looks with a delete button, and
-   saving under a name), **Footage** (the filters — best
-   clips only, keep the frame moving, skip dark clips, one day, daytime hours,
-   skip some dates), and **Advanced** (a dozen controls that mean something;
-   thresholds and windows the presets tune stay out of the UI).
+5. The panel on the right is a set of tools, each named after what it does to the
+   video and each saying its effect in words instead of a raw number:
+
+   | Tool | What it decides |
+   |---|---|
+   | **Look** | the preset to start from, and saving the current settings as one |
+   | **Pace** | how often it cuts, the shortest shot, the longest hold, and whether it follows the song's sections |
+   | **Cuts & transitions** | how shots join, and the stutter burst at the drop |
+   | **Footage** | which clips may be used: score, movement, darkness, a single day, daytime hours, skipped dates, aspect |
+   | **Order** | date order or shuffled, and whether the edit is reproducible from a seed |
+   | **Playback** | whether the preview plays the low-res proxies |
+
+   Readouts are human: a hold is "up to 2.4 s" at the song's tempo, a transition
+   is "quick dissolve · 120 ms", and the footage tool says how many of the
+   library's clips survive the filters. The panel scrolls, and collapses to its
+   title when you want the stage wider.
 6. The strip at the bottom is the edit. Select a segment to shorten, lengthen,
    chop, re-roll its in-point, swap its clip or delete it. Click a clip in the
    rail to drop it in at the playhead. It has a zoom (**−** / **+** in the

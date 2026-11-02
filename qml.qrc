@@ -9,8 +9,6 @@
         <file>qml/SectionLabel.qml</file>
         <file>qml/PanelBackground.qml</file>
         <file>qml/ScoreBadge.qml</file>
-        <file>qml/FilterRow.qml</file>
-        <file>qml/PanelSection.qml</file>
         <file>qml/DarkSlider.qml</file>
         <file>qml/LookPicker.qml</file>
         <file>qml/DayPicker.qml</file>
@@ -18,6 +16,10 @@
         <file>qml/IconButton.qml</file>
         <file>qml/Timeline.qml</file>
         <file>qml/ToggleSwitch.qml</file>
+        <file>qml/Segmented.qml</file>
+        <file>qml/SwitchRow.qml</file>
+        <file>qml/SliderRow.qml</file>
+        <file>qml/ToolCard.qml</file>
         <file>qml/FirstRun.qml</file>
     </qresource>
 </RCC>

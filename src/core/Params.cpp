@@ -29,6 +29,9 @@ QVariantMap Params::toMap() const {
     m["aggrFloor"] = aggrFloor;
     m["insMax"] = insMax;
     m["gridSec"] = gridSec;
+    // Shortest shot was applied from a map but never written to one: it did not
+    // survive a restart and no saved look ever carried it.
+    m["minShotSec"] = minShotSec;
     m["seed"] = seed;
     return m;
 }
@@ -68,28 +71,6 @@ void Params::applyMap(const QVariantMap &m) {
     num("gridSec", gridSec);
     num("minShotSec", minShotSec);
     num("seed", seed);
-}
-
-const QList<ParamField> &paramSchema() {
-    // Only knobs a person can reason about. Everything the presets tune internally
-    // (energy thresholds, stutter windows, aggressive-run lengths) stays out of the
-    // UI on purpose: nine of those settings are not a feature and ten of them made
-    // the panel unreadable.
-    static const QList<ParamField> s = {
-        {"aggro", QStringLiteral("Aggressivity"), QStringLiteral("0 sits on shots for ages, 2 cuts on nearly every beat."), ParamField::Number, 0, 2, 0.25},
-        {"minShotSec", QStringLiteral("Shortest shot"), QStringLiteral("No shot is shorter than this outside loud sections, however busy the song is."), ParamField::Number, 0.2, 4, 0.1, QStringLiteral("s")},
-        {"holdMax", QStringLiteral("Longest hold"), QStringLiteral("How many beats a single clip may stay on screen before it cuts."), ParamField::Number, 1, 8, 1},
-        {"fadeMs", QStringLiteral("Crossfade"), QStringLiteral("Soft dissolve between clips. 0 is a hard cut."), ParamField::Number, 0, 500, 10, QStringLiteral("ms")},
-        {"stutter", QStringLiteral("Drop stutters"), QStringLiteral("Chop the drop into a quick burst of shots."), ParamField::Check},
-        {"split", QStringLiteral("Stutter split"), QStringLiteral("How many pieces a stuttered drop is chopped into."), ParamField::Number, 2, 5, 1},
-        {"replicate", QStringLiteral("Mimic the song's own stutters"), QStringLiteral("Cuts land on off-beat hits the track already has."), ParamField::Check},
-        {"mood", QStringLiteral("Follow the music"), QStringLiteral("Holds and crossfades rise and fall with the song's sections."), ParamField::Check},
-        {"shuffle", QStringLiteral("Shuffle clip order"), QStringLiteral("Breaks the day/chronology walk. A fixed seed keeps the shuffle repeatable."), ParamField::Check},
-        {"useLrf", QStringLiteral("Play low-res proxies"), QStringLiteral("DJI cameras write a light .LRF twin next to each clip; it cuts faster."), ParamField::Check},
-        {"seed", QStringLiteral("Edit seed"), QStringLiteral("0 reshuffles every run; any other number reproduces the exact same edit."), ParamField::Number, 0, 99999, 1},
-        {"gridSec", QStringLiteral("Fallback cut interval"), QStringLiteral("Used when a song has no detectable beat."), ParamField::Number, 0.2, 2, 0.1, QStringLiteral("s")},
-    };
-    return s;
 }
 
 const QList<Preset> &builtinPresets() {

@@ -25,6 +25,8 @@ class Studio : public QObject {
     Q_PROPERTY(QString songName READ songName NOTIFY songChanged)
     Q_PROPERTY(bool songAnalysed READ songAnalysed NOTIFY analysisChanged)
     Q_PROPERTY(QString songSummary READ songSummary NOTIFY analysisChanged)
+    // Beats per minute, so beat-based settings can be shown as seconds.
+    Q_PROPERTY(double bpm READ bpm NOTIFY analysisChanged)
     Q_PROPERTY(bool busy READ busy NOTIFY busyChanged)
     Q_PROPERTY(QString status READ status NOTIFY statusChanged)
     Q_PROPERTY(int scoreDone READ scoreDone NOTIFY progressChanged)
@@ -39,8 +41,6 @@ class Studio : public QObject {
     // False while a pass makes the workspace unsafe to touch: the library is
     // being renumbered under the open edit, or there is no analysed song yet.
     Q_PROPERTY(bool workspaceEnabled READ workspaceEnabled NOTIFY progressChanged)
-    Q_PROPERTY(QVariantList presets READ presets NOTIFY presetsChanged)
-    Q_PROPERTY(QVariantList advanced READ advanced NOTIFY advancedChanged)
     Q_PROPERTY(QVariantList profiles READ profiles NOTIFY profilesChanged)
     // Every look the picker offers: built-in presets first, then saved ones, each
     // marked if it is the active look.
@@ -63,6 +63,7 @@ public:
     QString songName() const;
     bool songAnalysed() const { return m_analysis.valid(); }
     QString songSummary() const;
+    double bpm() const { return m_analysis.valid() ? m_analysis.bpm : 0.0; }
     // Derived: the library is scanning/scoring, or a song is being analysed.
     // One flag shared by both is what used to hide the scan progress behind a
     // finished analysis.
@@ -74,8 +75,6 @@ public:
     QString progressLabel() const;
     QString phase() const;
     bool workspaceEnabled() const;
-    QVariantList presets() const;
-    QVariantList advanced() const;
     QVariantList profiles() const;
     QVariantList looks() const;
     QString activePreset() const { return m_activePreset; }
@@ -127,8 +126,6 @@ signals:
     void busyChanged();
     void statusChanged();
     void progressChanged();
-    void presetsChanged();
-    void advancedChanged();
     void profilesChanged();
     void looksChanged();
     void activePresetChanged();

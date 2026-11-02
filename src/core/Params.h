@@ -41,18 +41,6 @@ struct Params {
     static Params fromMap(const QVariantMap &m) { Params p; p.applyMap(m); return p; }
 };
 
-// One row of the Advanced disclosure.
-struct ParamField {
-    QString key;
-    QString label;      // plain language, no jargon
-    QString hint;       // one sentence of what it changes
-    enum Kind { Number, Check, Text } kind = Number;
-    double min = 0, max = 1, step = 1;
-    QString unit;
-};
-
-extern const QList<ParamField> &paramSchema();
-
 // A named look. `overrides` only carries the fields that differ from defaults,
 // as the built-in PRESETS table does.
 struct Preset {
@@ -82,9 +70,11 @@ struct Filters {
     bool dayOn = false;
     QString day;
     bool scoreOn = false;
-    int scoreMin = 0;
+    int scoreMin = 0;      // derived: the score at the chosen percentage
+    int scorePct = 50;     // what the user picked, so the control can show it back
     bool mvOn = false;
     int mvMin = 0;
+    int mvPct = 50;
     bool arOn = false;
     double ar = 0;
     bool todOn = false;
