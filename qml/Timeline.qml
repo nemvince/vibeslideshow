@@ -96,21 +96,25 @@ Item {
             anchors.fill: parent
             contentWidth: tl.contentWidth
             contentHeight: height
-            // No drag-to-scroll: dragging on this surface scrubs, and it always has.
+            // Panning is driven from the strip's own mouse area (left-drag scrubs,
+            // shift/right-drag pans, middle-drag pans), not by the flickable: a
+            // draggable flickable would steal the scrub drag on the way.
             interactive: false
             clip: true
             boundsBehavior: Flickable.StopAtBounds
 
-            // Only there when there is something to scroll.
+            // Only there when there is something to scroll, and draggable: the
+            // strip answers the wheel, a drag on it and this bar.
             ScrollBar.horizontal: ScrollBar {
+                id: hbar
                 policy: tl.zoomed ? ScrollBar.AsNeeded : ScrollBar.AlwaysOff
-                height: 4
+                height: 8
                 background: Item {}
                 contentItem: Rectangle {
-                    implicitHeight: 3
-                    radius: 1.5
-                    color: Theme.faint
-                    opacity: parent.pressed ? 0.9 : 0.45
+                    implicitHeight: 5
+                    radius: 2.5
+                    color: Theme.dim
+                    opacity: hbar.pressed ? 1.0 : 0.55
                 }
             }
 
@@ -266,25 +270,61 @@ Item {
                     }
                 }
 
-                // ---- scrubbing ----
+                // ---- scrubbing and panning ----
+                // Left-drag scrubs (the strip is the seek control, and always was);
+                // shift-drag, right-drag or middle-drag pans the strip; a click
+                // still places the playhead and selects the segment under it.
                 MouseArea {
+                    id: surface
                     anchors.fill: parent
-                    cursorShape: Qt.PointingHandCursor
-                    onPressed: (m) => tl.seekTo(m.x)
-                    onPositionChanged: (m) => { if (pressed) tl.seekTo(m.x) }
-                    onReleased: (m) => {
-                        const idx = timeline.indexAt(tl.timeAt(m.x))
-                        if (idx >= 0) timeline.selected = idx
+                    acceptedButtons: Qt.LeftButton | Qt.RightButton | Qt.MiddleButton
+                    property bool panning: false
+                    property real lastX: 0
+                    cursorShape: panning ? Qt.ClosedHandCursor : Qt.PointingHandCursor
+
+                    function pan(dx) {
+                        flick.contentX = Math.max(0, Math.min(tl.maxScroll, flick.contentX - dx))
                     }
+
+                    onPressed: (m) => {
+                        panning = m.button !== Qt.LeftButton || (m.modifiers & Qt.ShiftModifier)
+                        lastX = m.x
+                        if (!panning) tl.seekTo(m.x)
+                    }
+                    onPositionChanged: (m) => {
+                        if (!pressed) return
+                        if (panning) {
+                            pan(m.x - lastX)
+                            lastX = m.x
+                        } else {
+                            tl.seekTo(m.x)
+                        }
+                    }
+                    onReleased: (m) => {
+                        if (!panning) {
+                            const idx = timeline.indexAt(tl.timeAt(m.x))
+                            if (idx >= 0) timeline.selected = idx
+                        }
+                        panning = false
+                    }
+                    onCanceled: panning = false
                 }
 
-                // Wheel scrolls, ctrl+wheel zooms around the middle of the view.
+                // Wheel scrolls (either axis: a trackpad swipes sideways), and
+                // ctrl+wheel zooms around the middle of the view.
                 WheelHandler {
                     onWheel: (event) => {
                         if (event.modifiers & Qt.ControlModifier) {
                             tl.setZoom(tl.zoom * (event.angleDelta.y > 0 ? 1.2 : 1 / 1.2))
                         } else if (tl.zoomed) {
-                            flick.contentX = Math.max(0, Math.min(tl.maxScroll, flick.contentX - event.angleDelta.y))
+                            // Trackpads and precision wheels report pixels rather
+                            // than the 120-unit notch; fall back to those.
+                            const dx = event.angleDelta.x || event.pixelDelta.x
+                            const dy = event.angleDelta.y || event.pixelDelta.y
+                            // A sideways swipe is already the direction we scroll in;
+                            // a vertical wheel scrolls the song left and right.
+                            if (Math.abs(dx) > Math.abs(dy)) surface.pan(-dx)
+                            else surface.pan(dy)
                         }
                         event.accepted = true
                     }
