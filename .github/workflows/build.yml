@@ -45,8 +45,26 @@ jobs:
           echo "Qt: $(command -v qmake6 || command -v qmake || echo none)"
           pkg-config --modversion mpv
 
+      - name: Install Qt 6
+        run: |
+          pacman -S --needed --noconfirm \
+            mingw-w64-ucrt-x86_64-qt6-base \
+            mingw-w64-ucrt-x86_64-qt6-declarative \
+          || {
+            echo "falling back to the qt6 metapackage"
+            pacman -S --needed --noconfirm mingw-w64-ucrt-x86_64-qt6
+          }
+
+      - name: Environment
+        run: |
+          bash --version | head -1
+          cmake --version | head -1
+          echo "MINGW_PREFIX=$MINGW_PREFIX"
+          pkgconf --modversion mpv || echo "no mpv.pc"
+          command -v windeployqt || echo "no windeployqt"
+
       - name: Build
-        run: bash scripts/build.sh --release
+        run: bash scripts/build.sh --release 2>&1 | tee build.log
 
       - name: Smoke test
         run: |
@@ -71,6 +89,14 @@ jobs:
         run: bash scripts/package.sh --linux --no-build
 
       - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: linux-x86_64-logs
+          path: |
+            build.log
+            app.log
+
+      - uses: actions/upload-artifact@v4
         with:
           name: linux-x86_64
           path: |
@@ -80,14 +106,16 @@ jobs:
 
   # ---------------------------------------------------------------- macos
   macos:
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
 
       - name: Install dependencies
         run: |
-          brew untap aws/tap || true
-          brew install qt mpv ffmpeg cmake ninja
+          # macos-15: homebrew has bottles for mpv from sequoia up. On macos-14 it
+          # builds mpv (and a dozen dependencies) from source instead, which is
+          # slow and fragile.
+          brew install qt mpv ffmpeg cmake ninja pkgconf
           # Optional: rewrites the ffmpeg binaries' dylib paths. The packaging
           # script only warns when it is missing, so a formula hiccup must not
           # fail the job.
@@ -100,8 +128,10 @@ jobs:
           # find_path never see libmpv and configure fails.
           export CMAKE_PREFIX_PATH="$(brew --prefix qt);$(brew --prefix)"
           export PKG_CONFIG_PATH="$(brew --prefix)/lib/pkgconfig:$(brew --prefix qt)/lib/pkgconfig"
-          pkg-config --modversion mpv
-          bash scripts/build.sh --release
+          # pkgconf is a build-dependency of the mpv formula, so it is not installed
+          # automatically; it is installed explicitly above. Informational only.
+          pkgconf --modversion mpv || echo "no mpv.pc; CMake will use its direct lookup"
+          bash scripts/build.sh --release 2>&1 | tee build.log
 
       - name: Smoke test
         run: |
@@ -127,6 +157,14 @@ jobs:
         run: |
           export PATH="$(brew --prefix qt)/bin:$PATH"
           bash scripts/package.sh --macos --no-build
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: macos-arm64-logs
+          path: |
+            build.log
+            app.log
 
       - uses: actions/upload-artifact@v4
         with:
@@ -156,31 +194,55 @@ jobs:
             mingw-w64-ucrt-x86_64-cmake
             mingw-w64-ucrt-x86_64-ninja
             mingw-w64-ucrt-x86_64-pkgconf
-            mingw-w64-ucrt-x86_64-qt6-base
-            mingw-w64-ucrt-x86_64-qt6-declarative
             mingw-w64-ucrt-x86_64-mpv
             mingw-w64-ucrt-x86_64-ffmpeg
             zip
 
+      - name: Install Qt 6
+        run: |
+          pacman -S --needed --noconfirm \
+            mingw-w64-ucrt-x86_64-qt6-base \
+            mingw-w64-ucrt-x86_64-qt6-declarative \
+          || {
+            echo "falling back to the qt6 metapackage"
+            pacman -S --needed --noconfirm mingw-w64-ucrt-x86_64-qt6
+          }
+
+      - name: Environment
+        run: |
+          bash --version | head -1
+          cmake --version | head -1
+          echo "MINGW_PREFIX=$MINGW_PREFIX"
+          pkgconf --modversion mpv || echo "no mpv.pc"
+          command -v windeployqt || echo "no windeployqt"
+
       - name: Build
-        run: bash scripts/build.sh --release
+        run: bash scripts/build.sh --release 2>&1 | tee build.log
 
       - name: Smoke test
         run: |
           set -e
           ./build/vibeslideshow.exe --version
-          ./build/vibeslideshow.exe > /tmp/app.log 2>&1 &
-          pid=$!
-          sleep 10
-          if kill -0 "$pid" 2>/dev/null; then
-            kill "$pid"; echo "app stayed up for 10s: ok"
-          else
-            wait "$pid"; code=$?
-            echo "app exited early (code $code)"; tail -30 /tmp/app.log; exit 1
+          # timeout(1) from coreutils: exit 124 means it was still running after
+          # 8 s, which is exactly what a healthy start-up looks like.
+          set +e
+          timeout 8 ./build/vibeslideshow.exe > app.log 2>&1
+          code=$?
+          set -e
+          if [ "$code" -eq 124 ]; then echo "app stayed up: ok"; else
+            echo "app exited (code $code)"; tail -30 app.log; exit 1
           fi
 
       - name: Package
         run: bash scripts/package.sh --windows --no-build
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: windows-x86_64-logs
+          path: |
+            build.log
+            app.log
 
       - uses: actions/upload-artifact@v4
         with:
