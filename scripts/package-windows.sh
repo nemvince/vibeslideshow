@@ -48,13 +48,19 @@ for tool in ffmpeg.exe ffprobe.exe; do
 done
 
 # libmpv plus every non-system DLL it and ffmpeg pull in.
+# DLLs that come from Windows itself, not from the bundle.
+is_system_dll() {
+    case "$(printf '%s' "$1" | tr 'A-Z' 'a-z')" in
+        kernel32.dll|user32.dll|gdi32.dll|shell32.dll|advapi32.dll|ole32.dll|oleaut32.dll|ws2_32.dll|mpr.dll|bcrypt.dll|dwmapi.dll|uxtheme.dll|winmm.dll|comdlg32.dll|imm32.dll|msvcrt.dll|shlwapi.dll|version.dll|d3d11.dll|d3d9.dll|dxgi.dll|secur32.dll|crypt32.dll|ntdll.dll|rpcrt4.dll|setupapi.dll|api-ms-win*|ucrtbase.dll|msvcp_win.dll) return 0 ;;
+    esac
+    return 1
+}
+
 copy_deps() {
     local target="$1"
     ldd "$target" 2>/dev/null | awk '/=> \//{print $3}' | while read -r dll; do
-        case "$(basename "$dll")" in
-            KERNEL32.dll|USER32.dll|GDI32.dll|SHELL32.dll|ADVAPI32.dll|ole32.dll|OLEAUT32.dll|WS2_32.dll|mpr.dll|bcrypt.dll|dwmapi.dll|uxtheme.dll|WINMM.dll|COMDLG32.dll|IMM32.dll|msvcrt.dll|SHLWAPI.dll|VERSION.dll|d3d11.dll|D3D9.dll|dxgi.dll|secur32.dll|CRYPT32.dll|ntdll.dll|RPCRT4.dll|SETUPAPI.dll|api-ms-win*) ;;
-            *) [ -f "$STAGE/$(basename "$dll")" ] || cp -f "$dll" "$STAGE/" ;;
-        esac
+        is_system_dll "$(basename "$dll")" && continue
+        [ -f "$STAGE/$(basename "$dll")" ] || cp -f "$dll" "$STAGE/"
     done
 }
 for dll in "$MINGW_PREFIX/bin/libmpv"*.dll; do
@@ -65,6 +71,28 @@ done
 copy_deps "$STAGE/ffmpeg.exe"
 copy_deps "$STAGE/ffprobe.exe"
 copy_deps "$STAGE/vibeslideshow.exe"
+
+# windeployqt reasons from the executable, so a dependency that only a plugin needs
+# is left out — the Qt Quick Controls 2 plugin is the classic case. Walk everything
+# that ended up in the bundle and pull its closure in as well.
+while IFS= read -r deployed; do
+    copy_deps "$deployed"
+done < <(find "$STAGE" \( -name '*.dll' -o -name '*.exe' \) | sort)
+
+# Nothing may be missing from the bundle: a bare DLL set fails at load time with
+# "plugin not found", which says nothing about the real culprit.
+missing=0
+while IFS= read -r deployed; do
+    ldd "$deployed" 2>/dev/null | awk '/=> \//{print $3}' | while read -r dep; do
+        base="$(basename "$dep")"
+        is_system_dll "$base" && continue
+        [ -f "$STAGE/$base" ] || echo "package-windows: bundle is missing $base (needed by $(basename "$deployed"))"
+    done
+done < <(find "$STAGE" \( -name '*.dll' -o -name '*.exe' \) | sort) | tee /tmp/bundle-check.txt
+if [ -s /tmp/bundle-check.txt ]; then
+    echo "package-windows: bundle is incomplete" >&2
+    exit 1
+fi
 
 if command -v 7z >/dev/null 2>&1; then
     7z a -tzip -bso0 -bsp0 "dist/$NAME.zip" "$STAGE" >/dev/null

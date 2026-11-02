@@ -218,6 +218,26 @@ jobs:
       - name: Package
         run: bash scripts/package.sh --windows --no-build
 
+      # The build-tree smoke test above resolves Qt from MSYS2's PATH, so it cannot
+      # notice a bundle that is missing a DLL. Run the deployed copy instead, from
+      # its own directory, with PATH stripped of the toolchain.
+      - name: Smoke test the bundle
+        run: |
+          set -e
+          bundle="$(echo dist/vibeslideshow-*-windows-x86_64)"
+          echo "== bundle: $bundle"
+          ( cd "$bundle" && env PATH="$(cygpath -w "$PWD")" ./vibeslideshow.exe --version )
+          set +e
+          ( cd "$bundle" && env PATH="$(cygpath -w "$PWD")" timeout 10 ./vibeslideshow.exe > bundle.log 2>&1 )
+          code=$?
+          set -e
+          if [ "$code" -eq 124 ]; then echo "bundle stayed up: ok"; else
+            echo "bundle exited (code $code)"; tail -40 "$bundle/bundle.log"; exit 1
+          fi
+          if grep -qi "failed to load" "$bundle/bundle.log"; then
+            echo "bundle QML failed to load"; tail -40 "$bundle/bundle.log"; exit 1
+          fi
+
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
