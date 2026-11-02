@@ -48,11 +48,28 @@ for tool in ffmpeg.exe ffprobe.exe; do
 done
 
 # libmpv plus every non-system DLL it and ffmpeg pull in.
-# DLLs that come from Windows itself, not from the bundle.
+#
+# A DLL that Windows ships is never bundled. This is not tidiness: MSYS2 keeps its
+# own import shims for Windows components in its prefix, so ldd resolves them
+# happily and the copy lands next to the exe, where it shadows the real DLL. That
+# is what shipped in 1.0.1 — a DWrite.dll and a GLU32.dll from the prefix, neither
+# of which exports what the system ones do — and the app died before its first
+# frame with "unable to find an entry point in ...".
+#
+# The authoritative test is therefore the system itself: if %SystemRoot%\System32
+# has a DLL of that name, the system provides it and the bundle must not.
+SYSTEM32=""
+if command -v cygpath >/dev/null 2>&1; then
+    SYSTEM32="$(cygpath -u "${SYSTEMROOT:-C:\\Windows}" 2>/dev/null || true)/System32"
+fi
+
+# Named as well, for the components that are not files of their own (the api-set
+# forwarders) and for packaging runs that cannot see System32 at all.
 is_system_dll() {
     case "$(printf '%s' "$1" | tr 'A-Z' 'a-z')" in
-        kernel32.dll|user32.dll|gdi32.dll|shell32.dll|advapi32.dll|ole32.dll|oleaut32.dll|ws2_32.dll|mpr.dll|bcrypt.dll|dwmapi.dll|uxtheme.dll|winmm.dll|comdlg32.dll|imm32.dll|msvcrt.dll|shlwapi.dll|version.dll|d3d11.dll|d3d9.dll|dxgi.dll|secur32.dll|crypt32.dll|ntdll.dll|rpcrt4.dll|setupapi.dll|api-ms-win*|ucrtbase.dll|msvcp_win.dll) return 0 ;;
+        kernel32.dll|user32.dll|gdi32.dll|gdi32full.dll|shell32.dll|advapi32.dll|ole32.dll|oleaut32.dll|ws2_32.dll|mpr.dll|bcrypt.dll|bcryptprimitives.dll|dwmapi.dll|uxtheme.dll|winmm.dll|comdlg32.dll|imm32.dll|msvcrt.dll|shlwapi.dll|version.dll|d3d9.dll|d3d10.dll|d3d11.dll|d3d12.dll|d2d1.dll|dcomp.dll|d3dcompiler_47.dll|dxgi.dll|dxva2.dll|dwrite.dll|glu32.dll|opengl32.dll|gdiplus.dll|msimg32.dll|secur32.dll|crypt32.dll|ntdll.dll|rpcrt4.dll|setupapi.dll|cfgmgr32.dll|combase.dll|kernelbase.dll|apphelp.dll|authz.dll|avicap32.dll|avrt.dll|comctl32.dll|cryptbase.dll|dnsapi.dll|iphlpapi.dll|userenv.dll|powrprof.dll|psapi.dll|propsys.dll|oleacc.dll|sechost.dll|dbghelp.dll|shcore.dll|winhttp.dll|wininet.dll|urlmon.dll|wtsapi32.dll|mfplat.dll|mfreadwrite.dll|evr.dll|wmcodecdspuuid.dll|api-ms-win*|ucrtbase.dll|msvcp_win.dll) return 0 ;;
     esac
+    [ -n "$SYSTEM32" ] && [ -f "$SYSTEM32/$1" ] && return 0
     return 1
 }
 
@@ -87,6 +104,21 @@ if [ -f "$WIDGETS" ] && [ ! -f "$STAGE/Qt6Widgets.dll" ]; then
     cp -f "$WIDGETS" "$STAGE/"
 else
     echo "package-windows: warning: $WIDGETS missing, the Controls plugin may not load" >&2
+fi
+
+# Whatever Windows ships must not be in here, under any name. Checked against the
+# real %SystemRoot%\System32 rather than a list, because the list is what failed.
+if [ -n "$SYSTEM32" ] && [ -d "$SYSTEM32" ]; then
+    for bundled in "$STAGE"/*.dll; do
+        [ -f "$bundled" ] || continue
+        name="$(basename "$bundled")"
+        if [ -f "$SYSTEM32/$name" ]; then
+            echo "package-windows: bundle contains the Windows system DLL $name" >&2
+            exit 1
+        fi
+    done
+else
+    echo "package-windows: warning: cannot read %SYSTEMROOT%\System32, skipping the system-DLL check" >&2
 fi
 
 # Assert the pieces this bundle has broken on before, so a regression fails the
