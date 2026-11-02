@@ -14,22 +14,38 @@ set(CMAKE_AUTORCC ON)
 find_package(Qt6 6.5 REQUIRED COMPONENTS Quick QuickControls2 Gui)
 qt_standard_project_setup(REQUIRES 6.5)
 
-# libmpv: pkg-config where it exists (Linux, Homebrew), direct lookup otherwise
-# (MSYS2 and hand-built libmpv do not always install mpv.pc).
+# libmpv: pkg-config where its paths are usable (Linux, Homebrew), direct lookup
+# otherwise. MSYS2's mpv.pc emits POSIX prefixes ("-I/ucrt64/include") that a
+# native Windows CMake cannot resolve, so a result with non-existent include
+# directories is treated as no result at all.
 find_package(PkgConfig QUIET)
 if(PkgConfig_FOUND)
     pkg_check_modules(MPV QUIET IMPORTED_TARGET mpv)
+    if(MPV_FOUND)
+        foreach(_mpv_dir IN LISTS MPV_INCLUDE_DIRS)
+            if(NOT EXISTS "${_mpv_dir}")
+                message(STATUS "libmpv: pkg-config gave unusable path '${_mpv_dir}', using find_path/find_library")
+                unset(MPV_FOUND)
+                break()
+            endif()
+        endforeach()
+    endif()
 endif()
 
 if(NOT MPV_FOUND)
-    find_path(MPV_INCLUDE_DIR mpv/client.h HINTS "${MPV_ROOT}/include" "${CMAKE_PREFIX_PATH}/include")
-    find_library(MPV_LIBRARY NAMES mpv mpv-2 libmpv HINTS "${MPV_ROOT}/lib" "${MPV_ROOT}/bin" "${CMAKE_PREFIX_PATH}/lib")
+    # MSYS2/MinGW is the case this exists for: hint the real installation root.
+    set(_mpv_hints "${MPV_ROOT}" "${CMAKE_PREFIX_PATH}" "$ENV{MINGW_PREFIX}")
+    find_path(MPV_INCLUDE_DIR mpv/client.h
+              HINTS ${_mpv_hints} PATH_SUFFIXES include)
+    find_library(MPV_LIBRARY NAMES mpv mpv-2 libmpv
+                 HINTS ${_mpv_hints} PATH_SUFFIXES lib bin)
     if(NOT MPV_INCLUDE_DIR OR NOT MPV_LIBRARY)
         message(FATAL_ERROR "libmpv not found. Install it (libmpv-dev, mpv-libs, brew install mpv), "
                             "or configure with -DMPV_ROOT=/path/to/libmpv.")
     endif()
-    message(STATUS "libmpv (no pkg-config): ${MPV_LIBRARY}")
+    message(STATUS "libmpv: ${MPV_LIBRARY} (headers ${MPV_INCLUDE_DIR})")
 endif()
+
 
 qt_add_executable(vibeslideshow
     src/main.cpp
