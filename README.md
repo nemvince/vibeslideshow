@@ -41,11 +41,11 @@ cmake --install build --prefix ~/.local
 
 `scripts/package.sh` builds and bundles for the host OS into `dist/`:
 
-| Platform | Produces | Needs |
-|---|---|---|
-| Linux | `vibeslideshow-<ver>-linux-<arch>.tar.gz`, plus `.deb` when `dpkg-deb` exists | Qt ≥ 6.5, libmpv, ffmpeg |
-| macOS | `vibeslideshow-<ver>-macos.zip` and `.dmg` (Qt + libmpv inside the `.app`) | `brew install qt mpv ffmpeg dylibbundler` |
-| Windows | `vibeslideshow-<ver>-windows-x86_64.zip` (Qt, libmpv, ffmpeg inside) | MSYS2 UCRT64 shell with `qt6-base qt6-declarative mpv ffmpeg` |
+| Platform | Produces                                                                      | Needs                                                         |
+| -------- | ----------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| Linux    | `vibeslideshow-<ver>-linux-<arch>.tar.gz`, plus `.deb` when `dpkg-deb` exists | Qt ≥ 6.5, libmpv, ffmpeg                                      |
+| macOS    | `vibeslideshow-<ver>-macos.zip` and `.dmg` (Qt + libmpv inside the `.app`)    | `brew install qt mpv ffmpeg dylibbundler`                     |
+| Windows  | `vibeslideshow-<ver>-windows-x86_64.zip` (Qt, libmpv, ffmpeg inside)          | MSYS2 UCRT64 shell with `qt6-base qt6-declarative mpv ffmpeg` |
 
 `--no-build` packages an existing `./build`. The platform scripts are
 `scripts/package-{linux,macos,windows}.sh` and can be run directly.
@@ -87,15 +87,18 @@ the code looks next to the binary first (and honours `VIBESLIDESHOW_TOOLS_DIR`).
 5. The panel on the right is a set of tools, each named after what it does to the
    video and each saying its effect in words instead of a raw number:
 
-   | Tool | What it decides |
-   |---|---|
-   | **Track** | what the analysis heard: tempo, key, energy, danceability, mood, level |
-   | **Look** | the preset to start from, and saving the current settings as one |
-   | **Pace** | how often it cuts, the shortest shot, the longest hold, and whether it follows the song's sections |
-   | **Cuts & transitions** | how shots join, and the stutter burst at the drop |
-   | **Footage** | which clips may be used: score, movement, darkness, a single day, daytime hours, skipped dates, aspect |
-   | **Order** | date order or shuffled, and whether the edit is reproducible from a seed |
-   | **Playback** | whether the preview plays the low-res proxies, and the size it plays at |
+   | Tool                   | What it decides                                                                                        |
+   | ---------------------- | ------------------------------------------------------------------------------------------------------ |
+   | **Track**              | what the analysis heard: tempo, key, energy, danceability, mood, level                                 |
+   | **Look**               | the preset to start from, and saving the current settings as one                                       |
+   | **Pace**               | how often it cuts, the shortest shot, the longest hold, and whether it follows the song's sections     |
+   | **Cuts & transitions** | how joins look, the step and ceiling for one cut, and the stutter burst at a drop                      |
+   | **Motion**             | whether every shot moves at all, and how far a push or pull may go                                     |
+   | **Footage**            | which clips may be used: score, movement, darkness, a single day, daytime hours, skipped dates, aspect |
+   | **Order**              | date order or shuffled, and whether the edit is reproducible from a seed                               |
+   | **Playback**           | whether the preview plays the low-res proxies, and the size it plays at                                |
+   | **Render**             | the frame, rate and encoder settings **Export…** and `--render` use                                    |
+   | **Editor**             | whether the last project reopens on launch, and how many undo steps are kept                           |
 
    **Preview size** (in the Playback tool) caps how big a picture the preview
    produces — full, 1080, 720 or 540 lines — and applies the moment you pick it.
@@ -116,6 +119,7 @@ the code looks next to the binary first (and honours `VIBESLIDESHOW_TOOLS_DIR`).
    all of it is measured from the file. The cut uses it: shots with movement land
    where the music moves and still ones where it breathes, and a track with a
    clear pulse is cut tighter than a loose one.
+
 6. The strip at the bottom is the edit. Select a segment to shorten, lengthen,
    chop, re-roll its in-point, swap its clip or delete it — from the toolbar, or
    by right-clicking the shot itself, which selects it and opens the same list
@@ -135,19 +139,26 @@ the code looks next to the binary first (and honours `VIBESLIDESHOW_TOOLS_DIR`).
    picture — shortening some other shot, say — is the surface left untouched.
 
    Every edit is undoable. The two arrows left of the edit actions, `Ctrl+Z` and
-   `Ctrl+Shift+Z` step back and forward through up to a hundred steps of
-   shorten / lengthen / chop / swap / re-roll / remove / drop / cut change.
+   `Ctrl+Shift+Z` step back and forward through the last hundred steps of
+   shorten / lengthen / chop / swap / re-roll / remove / drop / cut change (how
+   many is a setting, in **Editor**).
    Generating a new edit starts the history over; importing or removing footage
    is outside it, because a rescan renumbers the clips the edit names.
 
    Each shot also gets a slow move — the camera pushing in or pulling out, a
    couple of percent to about a thirteenth, chosen by whether the music is loud,
    building or chillin — alternating direction shot to shot so two neighbours
-   never drift the same way. The preview plays that move live, and the render
-   bakes it in. How two shots join is per cut: `H` makes the cut into the
-   selected shot hard, `[` softens it and `]` sharpens it again, in 40 ms steps
-   up to half a second. The cut before the first shot does not exist, so those
-   three do nothing there.
+   never drift the same way. The preview plays that move live and the render
+   bakes it in. The **Motion** tool turns it off entirely (a still frame per
+   shot) and scales how far it goes; either one lands on the edit that is already
+   on screen, not only on the next Generate.
+
+   How two shots join is per cut: `H` makes the cut into the selected shot hard,
+   `[` softens it and `]` sharpens it again. How far one press moves a cut, and
+   the longest a single cut may dissolve for, are settings in **Cuts &
+   transitions** — 40 ms and 500 ms out of the box. The cut before the first shot
+   does not exist, so those three do nothing there.
+
 7. **File…** in the top bar holds the project: **New project** (keeps the
    footage and the song, clears the edit), **Open…** and **Save a copy…**
    (`*.vibes`). A project remembers the footage, the song, the look, the filters
@@ -159,9 +170,10 @@ the code looks next to the binary first (and honours `VIBESLIDESHOW_TOOLS_DIR`).
    temporary directory, then a single pass that either joins the shots or
    dissolves them and muxes the song. Draft / Balanced / High change the encoder
    settings, not the cut. The dialog shows the progress of each phase and can
-   stop the run; a cancelled export leaves no file behind. The output is
-   1920×1080 at 30 fps, letterboxed rather than cropped, and its length is the
-   edit's own length.
+   stop the run; a cancelled export leaves no file behind. The frame and rate come
+   from the **Render** tool — 1080p, 1440p or 4K at 24 to 60 fps, 1920×1080 at
+   30 fps out of the box. A clip of a different shape is letterboxed rather than
+   cropped, and the film's length is the edit's own length.
 
 The same render runs without a window, which is what a batch job or a build
 machine uses:
@@ -173,7 +185,8 @@ vibeslideshow --render project.vibes --out film.mp4 \
 
 It prints the progress on stderr, the finished file on stdout, and exits 0 on
 success, 1 when the render fails (or the project has no edit) and 2 for bad
-arguments.
+arguments. Without `--quality` or `--size` it uses the project's own Render
+settings, so a batch render matches what the window would have written.
 
 While any pass runs, the top bar's message slot carries what it is doing and how
 far it has got (counts, ETA, percentage), with the progress line on the top bar's
@@ -264,7 +277,7 @@ These cost real debugging time; do not "clean them up".
    thread before `mpv_render_context_create` gives `Video: no video` and a
    permanently black surface.
 
-`setlocale(LC_NUMERIC, "C")` must be called *after* `QGuiApplication` is
+`setlocale(LC_NUMERIC, "C")` must be called _after_ `QGuiApplication` is
 constructed: Qt's constructor calls `setlocale(LC_ALL, "")` and would undo an
 earlier call, and mpv refuses to run under a comma-decimal locale.
 

@@ -33,7 +33,46 @@ QVariantMap Params::toMap() const {
     // survive a restart and no saved look ever carried it.
     m["minShotSec"] = minShotSec;
     m["seed"] = seed;
+    // The picture.
+    m["moveOn"] = moveOn;
+    m["moveAmt"] = moveAmt;
+    m["cutStep"] = cutStep;
+    m["cutMax"] = cutMax;
+    // The editor.
+    m["exportQuality"] = exportQuality;
+    m["exportW"] = exportW;
+    m["exportH"] = exportH;
+    m["exportFps"] = exportFps;
+    m["restoreProject"] = restoreProject;
+    m["undoDepth"] = undoDepth;
     return m;
+}
+
+QVariantMap Params::lookMap() const {
+    // A look is the cut and the picture. Where the film is exported to, how much
+    // undo the editor keeps and whether the last project reopens are not part of
+    // what a look looks like.
+    QVariantMap m = toMap();
+    for (const char *k : {"exportQuality", "exportW", "exportH", "exportFps", "restoreProject",
+                          "undoDepth"})
+        m.remove(QLatin1String(k));
+    return m;
+}
+
+void Params::keepPictureFrom(const Params &o) {
+    moveOn = o.moveOn;
+    moveAmt = o.moveAmt;
+    cutStep = o.cutStep;
+    cutMax = o.cutMax;
+}
+
+void Params::keepEditorFrom(const Params &o) {
+    exportQuality = o.exportQuality;
+    exportW = o.exportW;
+    exportH = o.exportH;
+    exportFps = o.exportFps;
+    restoreProject = o.restoreProject;
+    undoDepth = o.undoDepth;
 }
 
 void Params::applyMap(const QVariantMap &m) {
@@ -71,6 +110,16 @@ void Params::applyMap(const QVariantMap &m) {
     num("gridSec", gridSec);
     num("minShotSec", minShotSec);
     num("seed", seed);
+    flag("moveOn", moveOn);
+    num("moveAmt", moveAmt);
+    num("cutStep", cutStep);
+    num("cutMax", cutMax);
+    num("exportQuality", exportQuality);
+    num("exportW", exportW);
+    num("exportH", exportH);
+    num("exportFps", exportFps);
+    flag("restoreProject", restoreProject);
+    num("undoDepth", undoDepth);
 }
 
 const QList<Preset> &builtinPresets() {

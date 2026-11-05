@@ -189,7 +189,7 @@ void TimelineModel::touch() {
 
 void TimelineModel::pushUndo() {
     m_undo.append({m_segs, m_fades, m_poolIds, m_sel, m_edits});
-    if (m_undo.size() > kHistoryDepth) m_undo.removeFirst();
+    if (m_undo.size() > m_depth) m_undo.removeFirst();
     // A new change abandons whatever had been undone: there is no branching edit.
     m_redo.clear();
     emit historyChanged();
@@ -221,7 +221,7 @@ void TimelineModel::restore(const Snapshot &snap) {
 void TimelineModel::undo() {
     if (m_undo.isEmpty()) return;
     m_redo.append({m_segs, m_fades, m_poolIds, m_sel, m_edits});
-    if (m_redo.size() > kHistoryDepth) m_redo.removeFirst();
+    if (m_redo.size() > m_depth) m_redo.removeFirst();
     const Snapshot snap = m_undo.takeLast();
     restore(snap);
 }
@@ -229,9 +229,35 @@ void TimelineModel::undo() {
 void TimelineModel::redo() {
     if (m_redo.isEmpty()) return;
     m_undo.append({m_segs, m_fades, m_poolIds, m_sel, m_edits});
-    if (m_undo.size() > kHistoryDepth) m_undo.removeFirst();
+    if (m_undo.size() > m_depth) m_undo.removeFirst();
     const Snapshot snap = m_redo.takeLast();
     restore(snap);
+}
+
+void TimelineModel::setHistoryDepth(int steps) {
+    m_depth = std::clamp(steps, 1, 1000);
+    // Shrinking the history drops the oldest steps; growing it cannot bring back
+    // what was already discarded.
+    while (m_undo.size() > m_depth) m_undo.removeFirst();
+    while (m_redo.size() > m_depth) m_redo.removeFirst();
+    emit historyChanged();
+}
+
+void TimelineModel::applyMoves() {
+    if (m_segs.isEmpty() || !m_sched) return;
+    bool changedAny = false;
+    for (int i = 0; i < m_segs.size(); i++) {
+        const TlMove m = m_sched->moveFor(i, cutTime(i));
+        const TlMove &old = m_segs[i].move;
+        if (m.z0 == old.z0 && m.z1 == old.z1 && m.cx0 == old.cx0 && m.cy0 == old.cy0 &&
+            m.cx1 == old.cx1 && m.cy1 == old.cy1)
+            continue;
+        m_segs[i].move = m;
+        changedAny = true;
+    }
+    // A view setting, not an edit: no snapshot, no bump of the edit counter. Only
+    // the stage is told, so the preview and the next render use the new move.
+    if (changedAny) emit changed();
 }
 
 void TimelineModel::adoptEdit(const QList<TlSeg> &segs, const QList<double> &fades) {
@@ -476,9 +502,16 @@ void TimelineModel::runCommand(const QString &id) {
         const int k = m_sel;
         if (k <= 0 || k >= m_segs.size()) return;
         const double cur = m_fades.value(k, 0);
+        // The step and the ceiling are settings: `[` and `]` move a cut by
+        // `cutStep` ms, and no single cut dissolves for longer than `cutMax`.
+        const int step = m_sched ? std::max(1, m_sched->params().cutStep) : 40;
+        const double ceiling = double(m_sched ? std::max(step, m_sched->params().cutMax) : 500);
         const double next = (id == QLatin1String("cutHard")) ? 0.0
-                          : (id == QLatin1String("cutSofter")) ? std::min(500.0, cur + 40)
-                                                               : std::max(0.0, cur - 40);
+                          : (id == QLatin1String("cutSofter"))
+                                ? (cur < ceiling ? std::min(ceiling, cur + step) : cur)
+                                : (cur > 0 ? std::max(0.0, cur - step) : cur);
+        // Nothing left to do: a cut already at the ceiling cannot get softer, and
+        // one already hard cannot get sharper. No snapshot for a no-op.
         if (next == cur) return;
         pushUndo();
         m_fades[k] = next;

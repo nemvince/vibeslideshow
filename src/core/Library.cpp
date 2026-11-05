@@ -1,6 +1,8 @@
 #include "core/Tools.h"
 #include "core/Library.h"
 
+#include <QCoreApplication>
+
 #include <QDir>
 #include <QDirIterator>
 #include <QDateTime>
@@ -612,6 +614,18 @@ void Library::dropClips(const QSet<QString> &paths) {
     emit indexed();
 }
 
+void Library::post(const QPointer<Library> &self, std::function<void()> fn) {
+    if (QCoreApplication *app = QCoreApplication::instance()) {
+        QMetaObject::invokeMethod(app, [self, fn = std::move(fn)]() {
+            if (self) fn();
+        }, Qt::QueuedConnection);
+        return;
+    }
+    // No application (a unit test calling into the library directly): run it here,
+    // which is still correct as long as nothing is destroying the object.
+    if (self) fn();
+}
+
 void Library::startIndex() {
     if (m_busy) {
         m_restart = true;
@@ -629,16 +643,17 @@ void Library::startIndex() {
     const QList<CacheBucket> buckets = cacheBucketsFor(sources);
 
     // The index pass shells out to ffprobe per file: keep it off the UI thread.
-    QThread *t = QThread::create([this, gen, sources, hidden, buckets]() {
-        auto report = [this](int done, int total) {
-            QMetaObject::invokeMethod(this, [this, done, total]() {
+    const QPointer<Library> self(this);
+    QThread *t = QThread::create([self, this, gen, sources, hidden, buckets]() {
+        auto report = [self, this](int done, int total) {
+            post(self, [this, done, total]() {
                 m_scanDone = done;
                 m_scanTotal = total;
                 emit scanProgress(done, total);
-            }, Qt::QueuedConnection);
+            });
         };
         const ScanOutcome outcome = scanSources(sources, hidden, buckets, report);
-        QMetaObject::invokeMethod(this, [this, gen, outcome]() { applyIndex(gen, outcome); }, Qt::QueuedConnection);
+        post(self, [this, gen, outcome]() { applyIndex(gen, outcome); });
     });
     connect(t, &QThread::finished, t, &QObject::deleteLater);
     t->start();
@@ -702,7 +717,8 @@ void Library::scoreClips(quint64 gen) {
     const QList<Clip> snapshot = m_clips;
     const QList<CacheBucket> buckets = cacheBucketsFor(m_sources);
 
-    QThread *t = QThread::create([this, gen, snapshot, buckets]() {
+    const QPointer<Library> self(this);
+    QThread *t = QThread::create([self, this, gen, snapshot, buckets]() {
         QHash<QString, QVariantMap> cache;
         QHash<int, QString> cachePaths;
         loadCaches(buckets, &cache, &cachePaths);
@@ -726,7 +742,7 @@ void Library::scoreClips(quint64 gen) {
         std::vector<Score> results;
         results.resize(size_t(snapshot.size()));
 
-        auto postFraction = [this, gen, &unitsDone, unitsTotal, &lastFractionPost]() {
+        auto postFraction = [self, this, gen, &unitsDone, unitsTotal, &lastFractionPost]() {
             if (unitsTotal <= 0) return;
             // Throttle: a queued call per sampled frame would flood the GUI thread.
             const qint64 now = QDateTime::currentMSecsSinceEpoch();
@@ -734,19 +750,19 @@ void Library::scoreClips(quint64 gen) {
             if (now - prev < 120) return;
             lastFractionPost.store(now);
             const double frac = double(unitsDone.load()) / double(unitsTotal);
-            QMetaObject::invokeMethod(this, [this, gen, frac]() {
+            post(self, [this, gen, frac]() {
                 if (gen != m_gen) return;
                 setScoreFrac(frac);
                 emit scoringProgress(m_scoreDone, m_scoreTotal);
-            }, Qt::QueuedConnection);
+            });
         };
 
-        auto postProgress = [this, gen](int d, int total) {
-            QMetaObject::invokeMethod(this, [this, gen, d, total]() {
+        auto postProgress = [self, this, gen](int d, int total) {
+            post(self, [this, gen, d, total]() {
                 if (gen != m_gen) return;
                 m_scoreDone = d;
                 emit scoringProgress(d, total);
-            }, Qt::QueuedConnection);
+            });
         };
 
         auto flush = [&]() {
@@ -836,7 +852,7 @@ void Library::scoreClips(quint64 gen) {
         QList<Score> scores;
         scores.reserve(total);
         for (int i = 0; i < total; i++) scores.append(results[size_t(i)]);
-        QMetaObject::invokeMethod(this, [this, gen, scores]() { applyScores(gen, scores); }, Qt::QueuedConnection);
+        post(self, [this, gen, scores]() { applyScores(gen, scores); });
     });
     connect(t, &QThread::finished, t, &QObject::deleteLater);
     t->start();

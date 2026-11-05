@@ -2,7 +2,9 @@
 #include "core/Types.h"
 #include "core/Params.h"
 #include <QObject>
+#include <QPointer>
 #include <QStringList>
+#include <functional>
 #include <QVariantMap>
 #include <QHash>
 #include <QSet>
@@ -93,6 +95,13 @@ private:
     void applyScores(quint64 gen, const QList<Score> &scores);
     void restartIfPending();
     void setBusyInternal(bool b);
+    // Posting from a worker straight to `this` is unsafe once the Library is gone:
+    // the queued call is built against a dead QObject and crashes before its body
+    // can check anything. Workers therefore post to the application (which always
+    // outlives them and always delivers on the GUI thread) and run their body only
+    // if `self` survived. `self` is taken on the GUI thread before the worker
+    // starts, so a worker never has to touch the object just to build the guard.
+    static void post(const QPointer<Library> &self, std::function<void()> fn);
     // The human-readable source list used in failure messages.
     QString sourcesLabel() const;
 

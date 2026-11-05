@@ -36,8 +36,33 @@ struct Params {
     double minShotSec = 1.2;
     int seed = 0;
 
+    // ---- the picture ----------------------------------------------------
+    // These change what the film looks like, so a saved look carries them and a
+    // preset switch leaves them alone.
+    bool moveOn = true;      // move every shot (Ken Burns)
+    double moveAmt = 1.0;    // 0..1, how far a shot is pushed or pulled
+    int cutStep = 40;        // ms `[` and `]` move a single cut by
+    int cutMax = 500;        // longest one cut may dissolve for, ms
+
+    // ---- the editor -----------------------------------------------------
+    // Belong to the app, not to a look: carried in params.json and in a project,
+    // never in a saved look.
+    int exportQuality = 1;   // 0 draft, 1 balanced, 2 high
+    int exportW = 1920;
+    int exportH = 1080;
+    int exportFps = 30;
+    bool restoreProject = true;   // reopen the last project on launch
+    int undoDepth = 100;          // how many edit steps the history keeps
+
     QVariantMap toMap() const;
+    // Everything a saved look owns: the generation knobs and the picture settings.
+    QVariantMap lookMap() const;
     void applyMap(const QVariantMap &m);
+    // A preset swap rebuilds the generation knobs from defaults; these carry over
+    // what it must not disturb. A "Defaults" reset also carries the editor group,
+    // but not the picture — that is part of the look.
+    void keepPictureFrom(const Params &o);
+    void keepEditorFrom(const Params &o);
     static Params fromMap(const QVariantMap &m) { Params p; p.applyMap(m); return p; }
 };
 

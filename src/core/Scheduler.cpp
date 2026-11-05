@@ -399,32 +399,6 @@ QList<TlSeg> Scheduler::materialize(double songDuration, const QList<Clip> &base
         const double end = (i + 1 < cc.times.size()) ? cc.times[i + 1] : songDuration;
         segs.append({-1, 0, std::max(TL_MIN, end - cc.times[i])});
     }
-    // How much movement a shot should have at a given moment. The music already
-    // tells us: loud runs and drops want the camera moving, chill passages want
-    // stillness. Taken from the same section table the holds are built from.
-    auto wantedMotion = [this](double t) {
-        const int si = secIdxAt(t);
-        if (si < 0) return 0.5;
-        const QString kind = m_a.sections[si].kind;
-        if (kind == QLatin1String("loud") || kind == QLatin1String("drop")) return 0.85;
-        if (kind == QLatin1String("build")) return 0.7;
-        if (kind == QLatin1String("chill")) return 0.2;
-        return 0.5;
-    };
-
-    // Alternating push-in / pull-out so two neighbouring shots never move the same
-    // way; how far comes from the same section table the holds use.
-    auto moveFor = [&wantedMotion](int i, double t) {
-        const double want = wantedMotion(t);
-        const double amp = 0.04 + 0.09 * want;          // 4 % .. 13 %
-        TlMove m;
-        if (i % 2 == 0) { m.z0 = 1.0;        m.z1 = 1.0 + amp; }
-        else            { m.z0 = 1.0 + amp;  m.z1 = 1.0; }
-        const double drift = ((i / 2) % 2 == 0) ? -0.06 : 0.06;
-        m.cx0 = 0.5 - drift; m.cx1 = 0.5 + drift;
-        m.cy0 = m.cy1 = 0.5;
-        return m;
-    };
 
     // The walk stays chronological, but not blindly so: for each segment we look a
     // few clips ahead and take the one whose movement matches the section, then
@@ -481,3 +455,32 @@ QList<TlSeg> Scheduler::materialize(double songDuration, const QList<Clip> &base
     return segs;
 }
 
+// How much movement a shot should have at a given moment. The music already tells
+// us: loud runs and drops want the camera moving, chill passages want stillness.
+// Taken from the same section table the holds are built from.
+double Scheduler::wantedMotion(double t) const {
+    const int si = secIdxAt(t);
+    if (si < 0) return 0.5;
+    const QString kind = m_a.sections[si].kind;
+    if (kind == QLatin1String("loud") || kind == QLatin1String("drop")) return 0.85;
+    if (kind == QLatin1String("build")) return 0.7;
+    if (kind == QLatin1String("chill")) return 0.2;
+    return 0.5;
+}
+
+TlMove Scheduler::moveFor(int i, double t) const {
+    TlMove m;
+    if (!m_p.moveOn) return m;   // a still frame: the editor's "move the shots" is off
+    // Alternating push-in / pull-out so two neighbouring shots never move the same
+    // way; how far comes from the same section table the holds use, scaled by how
+    // much movement the user asked for.
+    const double amt = std::clamp(m_p.moveAmt, 0.0, 1.0);
+    const double amp = (0.04 + 0.09 * wantedMotion(t)) * amt;   // 4 % .. 13 %, scaled
+    if (i % 2 == 0) { m.z0 = 1.0;       m.z1 = 1.0 + amp; }
+    else            { m.z0 = 1.0 + amp; m.z1 = 1.0; }
+    const double drift = ((i / 2) % 2 == 0) ? -0.06 : 0.06;
+    m.cx0 = 0.5 - drift;
+    m.cx1 = 0.5 + drift;
+    m.cy0 = m.cy1 = 0.5;
+    return m;
+}

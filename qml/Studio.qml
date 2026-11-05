@@ -639,8 +639,9 @@ ApplicationWindow {
         width: 540
         padding: 18
         closePolicy: Popup.CloseOnEscape
-        // 0 draft, 1 balanced, 2 high.
-        property int quality: 1
+        // 0 draft, 1 balanced, 2 high — starts at the Render tool's setting and is
+        // remembered there when this export runs.
+        property int quality: studio.params.exportQuality
 
         enter: Transition { NumberAnimation { property: "opacity"; from: 0; to: 1; duration: Theme.dur } }
         exit: Transition { NumberAnimation { property: "opacity"; from: 1; to: 0; duration: 120 } }
@@ -707,6 +708,16 @@ ApplicationWindow {
                 ]
                 value: exportDialog.quality
                 onSelected: (v) => exportDialog.quality = v
+            }
+
+            Text {
+                width: expCol.width
+                text: studio.params.exportW + " × " + studio.params.exportH + " · "
+                      + Math.round(studio.params.exportFps) + " fps · "
+                      + (studio.params.moveOn === true ? "shots move" : "still frames")
+                color: Theme.faint
+                font.pixelSize: 10
+                elide: Text.ElideRight
             }
 
             ProgressLine {

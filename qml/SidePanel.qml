@@ -315,6 +315,29 @@ Rectangle {
                     onMoved: (v) => studio.setParam("fadeMs", v)
                 }
 
+                // The two settings behind `[` and `]` on a single cut, so the
+                // per-cut control is not a fixed 40 ms step nobody chose.
+                SliderRow {
+                    label: "One cut, per step"
+                    valueText: Math.round(studio.params.cutStep) + " ms"
+                    hint: "How much [ and ] move a single cut."
+                    from: 10
+                    to: 100
+                    step: 5
+                    value: studio.params.cutStep
+                    onMoved: (v) => studio.setParam("cutStep", v)
+                }
+                SliderRow {
+                    label: "Longest single cut"
+                    valueText: Math.round(studio.params.cutMax) + " ms"
+                    hint: "No one join dissolves for longer than this."
+                    from: 100
+                    to: 1000
+                    step: 50
+                    value: studio.params.cutMax
+                    onMoved: (v) => studio.setParam("cutMax", v)
+                }
+
                 SwitchRow {
                     label: "Stutter the drops"
                     hint: "Chops the drop into a quick burst of shots instead of one."
@@ -349,6 +372,35 @@ Rectangle {
                     hint: "Cuts land on the off-beat hits the song already has."
                     checked: studio.params.replicate === true
                     onToggled: (on) => studio.setParam("replicate", on)
+                }
+            }
+
+            // ---- motion -------------------------------------------------
+            // Ken Burns, on or off, and how far. This is a picture setting: it is
+            // applied to the edit that is already on screen, not only on the next
+            // Generate, and a saved look carries it.
+            ToolCard {
+                title: "Motion"
+                hint: "Every shot slowly pushes in or pulls out, alternating so two neighbours never drift the same way."
+
+                SwitchRow {
+                    label: "Move the shots"
+                    hint: "Off holds every frame perfectly still — a slideshow, not a camera move."
+                    checked: studio.params.moveOn === true
+                    onToggled: (on) => studio.setParam("moveOn", on)
+                }
+
+                SliderRow {
+                    label: "How far"
+                    visible: studio.params.moveOn === true
+                    valueText: Math.round(4 * studio.params.moveAmt) + "–"
+                             + Math.round(13 * studio.params.moveAmt) + " % of the frame"
+                    hint: "The music decides where in that range a shot lands: loud runs move more, quiet parts barely at all."
+                    from: 0.1
+                    to: 1
+                    step: 0.05
+                    value: studio.params.moveAmt
+                    onMoved: (v) => studio.setParam("moveAmt", v)
                 }
             }
 
@@ -602,6 +654,102 @@ Rectangle {
                     font.pixelSize: 10
                     lineHeight: 1.2
                     wrapMode: Text.WordWrap
+                }
+            }
+
+            // ---- render -------------------------------------------------
+            // What Export… produces unless it is changed for that one run, and
+            // what `--render` uses on a project that has never been exported.
+            ToolCard {
+                title: "Render"
+                hint: "What Export… writes: the frame it encodes into, the rate, and how hard the encoder works."
+
+                Segmented {
+                    objectName: "renderSize"
+                    Layout.fillWidth: true
+                    // The current height is always an option: a project that came
+                    // with a size the presets do not cover must still show which
+                    // one it has instead of an empty strip.
+                    property var sizeOptions: {
+                        const base = [720, 1080, 1440, 2160]
+                        const h = Math.round(studio.params.exportH)
+                        if (base.indexOf(h) < 0) base.push(h)
+                        base.sort(function(a, b) { return a - b })
+                        return base.map(function(v) {
+                            return { label: v === 2160 ? "4K" : v + "p", value: v }
+                        })
+                    }
+                    options: sizeOptions
+                    value: studio.params.exportH
+                    onSelected: (v) => {
+                        studio.setParam("exportW", Math.round(v * 16 / 9))
+                        studio.setParam("exportH", v)
+                    }
+                }
+                Text {
+                    Layout.fillWidth: true
+                    text: studio.params.exportW + " × " + studio.params.exportH + " · "
+                          + Math.round(studio.params.exportFps) + " fps"
+                    color: Theme.faint
+                    font.pixelSize: 10
+                }
+
+                Segmented {
+                    objectName: "renderFps"
+                    Layout.fillWidth: true
+                    options: [
+                        { label: "24", value: 24 },
+                        { label: "25", value: 25 },
+                        { label: "30", value: 30 },
+                        { label: "50", value: 50 },
+                        { label: "60", value: 60 }
+                    ]
+                    value: studio.params.exportFps
+                    onSelected: (v) => studio.setParam("exportFps", v)
+                }
+
+                Segmented {
+                    objectName: "renderQuality"
+                    Layout.fillWidth: true
+                    options: [
+                        { label: "Draft", value: 0 },
+                        { label: "Balanced", value: 1 },
+                        { label: "High", value: 2 }
+                    ]
+                    value: studio.params.exportQuality
+                    onSelected: (v) => studio.setParam("exportQuality", v)
+                }
+                Text {
+                    Layout.fillWidth: true
+                    text: "Draft is quick to check, High is the one to keep — the cut is the same either way."
+                    color: Theme.faint
+                    font.pixelSize: 10
+                    lineHeight: 1.2
+                    wrapMode: Text.WordWrap
+                }
+            }
+
+            // ---- editor -------------------------------------------------
+            ToolCard {
+                title: "Editor"
+                hint: "How the window behaves from one session to the next."
+
+                SwitchRow {
+                    label: "Reopen the last project"
+                    hint: "Off starts with the footage and the song but no project open."
+                    checked: studio.params.restoreProject === true
+                    onToggled: (on) => studio.setParam("restoreProject", on)
+                }
+
+                SliderRow {
+                    label: "Undo steps"
+                    valueText: Math.round(studio.params.undoDepth) + " steps"
+                    hint: "How far back Ctrl+Z can walk before the oldest step is dropped."
+                    from: 10
+                    to: 300
+                    step: 10
+                    value: studio.params.undoDepth
+                    onMoved: (v) => studio.setParam("undoDepth", v)
                 }
             }
 

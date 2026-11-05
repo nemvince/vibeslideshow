@@ -70,24 +70,30 @@ RunResult renderShot(const RenderSeg &s, int index, double padMs, const Exporter
     const int sh = evenAtLeast2(int(std::lround(s.h * k)));
     const int frames = std::max(1, int(std::lround(s.len * opt.fps)));
 
-    const QString zoom = QStringLiteral("z='%1+(%2-%1)*on/%3'")
-                             .arg(num(s.move.z0, 4), num(s.move.z1, 4)).arg(frames);
-    const QString px = QStringLiteral("x='(iw-iw/zoom)*(%1+(%2-%1)*on/%3)'")
-                           .arg(num(s.move.cx0, 4), num(s.move.cx1, 4)).arg(frames);
-    const QString py = QStringLiteral("y='(ih-ih/zoom)*(%1+(%2-%1)*on/%3)'")
-                           .arg(num(s.move.cy0, 4), num(s.move.cy1, 4)).arg(frames);
-
     // Letterbox offsets, in pixels: the pad filter would take an expression, but
     // the numbers are already known here and an even offset is mandatory for
     // 4:2:0 chroma.
     const int padX = ((outW - sw) / 2) & ~1;
     const int padY = ((outH - sh) / 2) & ~1;
-    QString chain = QStringLiteral("fps=%1,scale=%2:%3:flags=bicubic,"
-                                   "zoompan=%4:%5:%6:d=1:s=%2x%3:fps=%1,"
-                                   "pad=%7:%8:%9:%10,setsar=1")
-                        .arg(QString::number(opt.fps), QString::number(sw), QString::number(sh),
-                             zoom, px, py, QString::number(outW), QString::number(outH),
-                             QString::number(padX), QString::number(padY));
+    QString chain = QStringLiteral("fps=%1,scale=%2:%3:flags=bicubic")
+                        .arg(QString::number(opt.fps), QString::number(sw), QString::number(sh));
+    // A still shot has nothing to interpolate: the zoompan is left out entirely,
+    // which is what "move the shots" being off costs (nothing) and saves (a filter
+    // over every frame).
+    if (!s.move.still()) {
+        const QString zoom = QStringLiteral("z='%1+(%2-%1)*on/%3'")
+                                 .arg(num(s.move.z0, 4), num(s.move.z1, 4)).arg(frames);
+        const QString px = QStringLiteral("x='(iw-iw/zoom)*(%1+(%2-%1)*on/%3)'")
+                               .arg(num(s.move.cx0, 4), num(s.move.cx1, 4)).arg(frames);
+        const QString py = QStringLiteral("y='(ih-ih/zoom)*(%1+(%2-%1)*on/%3)'")
+                               .arg(num(s.move.cy0, 4), num(s.move.cy1, 4)).arg(frames);
+        chain += QStringLiteral(",zoompan=%1:%2:%3:d=1:s=%4x%5:fps=%6")
+                     .arg(zoom, px, py, QString::number(sw), QString::number(sh),
+                          QString::number(opt.fps));
+    }
+    chain += QStringLiteral(",pad=%1:%2:%3:%4,setsar=1")
+                 .arg(QString::number(outW), QString::number(outH), QString::number(padX),
+                      QString::number(padY));
     if (padMs > 0)
         chain += QStringLiteral(",tpad=stop_mode=clone:stop_duration=%1").arg(num(padMs / 1000.0, 3));
 

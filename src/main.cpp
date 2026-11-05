@@ -12,6 +12,7 @@
 
 #include "core/Document.h"
 #include "core/Exporter.h"
+#include "core/Params.h"
 #include "core/RenderPlan.h"
 #include "player/MpvItem.h"
 #include "player/Show.h"
@@ -43,12 +44,20 @@ int runRender(int argc, char *argv[], const QString &project, const QString &out
         std::fprintf(stderr, "%s\n", qPrintable(err));
         return 1;
     }
+    // The project carries its own render settings; a flag overrides them.
+    const Params saved = Params::fromMap(doc.params);
     Exporter::Options opt;
+    opt.quality = saved.exportQuality <= 0   ? Exporter::Quality::Draft
+                  : saved.exportQuality >= 2 ? Exporter::Quality::High
+                                             : Exporter::Quality::Balanced;
+    opt.size = QSize(std::max(2, saved.exportW), std::max(2, saved.exportH));
+    opt.fps = std::max(1, saved.exportFps);
     if (quality == QLatin1String("draft")) opt.quality = Exporter::Quality::Draft;
     else if (quality == QLatin1String("high")) opt.quality = Exporter::Quality::High;
-    else if (quality == QLatin1String("balanced") || quality.isEmpty())
-        opt.quality = Exporter::Quality::Balanced;
-    else {
+    else if (quality.isEmpty() || quality == QLatin1String("balanced")) {
+        // "balanced" is the project's own choice only when it said so.
+        if (quality == QLatin1String("balanced")) opt.quality = Exporter::Quality::Balanced;
+    } else {
         std::fprintf(stderr, "unknown --quality %s (draft, balanced or high)\n", qPrintable(quality));
         return 2;
     }

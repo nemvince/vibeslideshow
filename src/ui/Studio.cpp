@@ -242,6 +242,9 @@ Studio::Studio(QObject *parent) : QObject(parent) {
     syncScheduler();
     refreshProfiles();
     restoreSession();
+    // The history depth is a setting, and the session that was just restored is
+    // where it comes from.
+    m_timeline->setHistoryDepth(m_params.undoDepth);
 }
 
 Studio::~Studio() = default;
@@ -283,9 +286,12 @@ void Studio::restoreSession() {
         session = QJsonDocument::fromJson(pf.readAll()).object();
 
     // A project file wins: it carries the footage, the look and the edit, so the
-    // session's own copy of all three is not consulted when it opens.
+    // session's own copy of all three is not consulted when it opens. Unless the
+    // user turned that off, in which case the session is restored as it stands.
+    const bool reopen = session.value("params").toObject()
+                            .value("restoreProject").toBool(true);
     const QString remembered = session.value("document").toString();
-    if (!remembered.isEmpty() && QFileInfo::exists(remembered) &&
+    if (reopen && !remembered.isEmpty() && QFileInfo::exists(remembered) &&
         openDocument(QUrl::fromLocalFile(remembered)))
         return;
 
@@ -417,7 +423,7 @@ QVariantList Studio::profiles() const {
 void Studio::saveProfile(const QString &name) {
     if (name.trimmed().isEmpty()) return;
     QVariantMap entry;
-    entry["params"] = m_params.toMap();
+    entry["params"] = m_params.lookMap();
     entry["preset"] = m_activePreset;
     entry["filters"] = filtersToMap(m_filters);
     m_profiles.insert(name.trimmed(), entry);
@@ -718,6 +724,7 @@ void Studio::newDocument() {
     m_show->stop();
     m_pendingDocSegs.clear();
     m_docOpen = false;
+    m_docSkipGenerate = false;
     m_timeline->adoptEdit({}, {});
     m_docPath.clear();
     emit documentChanged();
@@ -802,8 +809,11 @@ bool Studio::openDocument(const QUrl &url) {
     m_docOpen = true;
 
     // The song may be a different one: its analysis is what the edit was cut to,
-    // and it must land before the scan's result is applied.
-    if (!d.song.isEmpty() && (d.song != m_song || !m_analysis.valid())) loadSongFile(d.song);
+    // and it must land before the scan's result is applied. Reading it must not
+    // end in a fresh cut, so the skip is armed exactly when a read starts.
+    const bool reloadSong = !d.song.isEmpty() && (d.song != m_song || !m_analysis.valid());
+    m_docSkipGenerate = reloadSong;
+    if (reloadSong) loadSongFile(d.song);
     startIndexing();
     setStatus(QStringLiteral("Opened %1").arg(QFileInfo(path).fileName()));
     return true;
@@ -936,7 +946,9 @@ void Studio::loadSongFile(const QString &path) {
             emit editChanged();
             persist();
             // An opened project's edit is its own; only a fresh session cuts one.
-            if (!m_docOpen) generate();
+            // One skip per open, whatever order the scan and this arrived in.
+            if (m_docSkipGenerate) m_docSkipGenerate = false;
+            else generate();
         }, Qt::QueuedConnection);
     });
     connect(t, &QThread::finished, t, &QObject::deleteLater);
@@ -964,6 +976,10 @@ void Studio::applyPreset(const QString &name) {
         if (p.name != name) continue;
         Params base;   // presets are sparse: they layer on the defaults
         base.applyMap(p.overrides);
+        // A preset decides how the film is cut, not how the camera moves or where
+        // it is exported: those survive the switch.
+        base.keepPictureFrom(m_params);
+        base.keepEditorFrom(m_params);
         m_params = base;
         setActiveLook(name, QString());
         syncScheduler();
@@ -983,12 +999,20 @@ void Studio::setParam(const QString &key, const QVariant &value) {
     // Any hand edit detaches from the named look.
     setActiveLook(QString(), QString());
     syncScheduler();
+    // Movement is already baked into the edit that is on screen: re-apply it now
+    // rather than waiting for the next Generate, or the switch would look dead.
+    if (key == QLatin1String("moveOn") || key == QLatin1String("moveAmt"))
+        m_timeline->applyMoves();
+    else if (key == QLatin1String("undoDepth"))
+        m_timeline->setHistoryDepth(m_params.undoDepth);
     emit paramsChanged();
     persist();
 }
 
 void Studio::restoreDefaults() {
+    const Params editor = m_params;
     m_params = Params();
+    m_params.keepEditorFrom(editor);
     setActiveLook(QStringLiteral("Anything"), QString());
     syncScheduler();
     emit paramsChanged();
@@ -1108,9 +1132,22 @@ void Studio::exportVideo(const QUrl &file, int quality) {
         return;
     }
     Exporter::Options opt;
-    opt.quality = quality <= 0   ? Exporter::Quality::Draft
-                  : quality >= 2 ? Exporter::Quality::High
-                                 : Exporter::Quality::Balanced;
+    // The dialog's quality wins; the rest is the project's own render settings,
+    // which live in the panel's Render tool.
+    const int q = quality < 0 ? m_params.exportQuality : quality;
+    opt.quality = q <= 0   ? Exporter::Quality::Draft
+                  : q >= 2 ? Exporter::Quality::High
+                           : Exporter::Quality::Balanced;
+    opt.size = QSize(std::max(2, m_params.exportW), std::max(2, m_params.exportH));
+    opt.fps = std::max(1, m_params.exportFps);
+    // A quality picked in the dialog becomes the project's default, so the next
+    // export starts where this one did. Not through setParam: that would also
+    // detach the look, and export settings are not part of a look.
+    if (q != m_params.exportQuality) {
+        m_params.exportQuality = q;
+        persist();
+        emit paramsChanged();
+    }
     const QList<RenderSeg> plan =
         buildRenderPlan(m_timeline->segments(), m_timeline->fades(), *m_lib);
     m_exportProgress = 0;

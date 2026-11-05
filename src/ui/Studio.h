@@ -258,6 +258,10 @@ private:
     QString m_docPath;
     QList<DocSeg> m_pendingDocSegs;
     bool m_docOpen = false;
+    // A just-opened project must not have its song analysis answered with a fresh
+    // cut: which of the two arrives first (scan or analysis) is a race, so the
+    // decision cannot hang off the scan's own flag.
+    bool m_docSkipGenerate = false;
     Exporter *m_exporter = nullptr;
     double m_exportProgress = 0;
     QString m_exportStatus;

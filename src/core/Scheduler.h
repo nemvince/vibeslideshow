@@ -54,12 +54,20 @@ public:
     // schedule the segments came from, fades included.
     QList<TlSeg> materialize(double songDuration, const QList<Clip> &base, Cuts *cutsOut = nullptr);
 
+    // The move shot `i` gets, starting at song time `t`: alternating push-in /
+    // pull-out, sized by the section it lands in and by P.moveAmt, and still when
+    // P.moveOn is off. Public because the edit re-applies it when that setting
+    // changes, without re-cutting anything.
+    TlMove moveFor(int i, double t) const;
+
 private:
     Params m_p;
     Analysis m_a;
     QList<Clip> m_pool;
     std::unique_ptr<SeededRng> m_rng;
 
+    // How much movement the music wants at `t`: 0..1 from the section map.
+    double wantedMotion(double t) const;
     int secIdxAt(double t) const;
     double fadeFor(double t) const;
     QList<int> dropBestIds() const;

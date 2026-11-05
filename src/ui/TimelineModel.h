@@ -96,6 +96,12 @@ public:
     bool canRedo() const { return !m_redo.isEmpty(); }
     Q_INVOKABLE void undo();
     Q_INVOKABLE void redo();
+    // How many steps the history keeps (the editor's "Undo steps" setting).
+    void setHistoryDepth(int steps);
+    // Re-apply the per-shot move to the edit as it stands, without re-cutting it:
+    // turning movement off (or down) must be visible at once, not on the next
+    // Generate.
+    Q_INVOKABLE void applyMoves();
     // Replace the whole edit with one loaded from a document. No history: it is a
     // different edit, not a step inside this one.
     void adoptEdit(const QList<TlSeg> &segs, const QList<double> &fades);
@@ -122,7 +128,8 @@ private:
         int sel = -1;
         int edits = 0;
     };
-    static constexpr int kHistoryDepth = 100;
+    static constexpr int kDefaultHistoryDepth = 100;
+    int m_depth = kDefaultHistoryDepth;
     void pushUndo();          // call after the guards, before the first mutation
     void restore(const Snapshot &snap);
     void clearHistory();
