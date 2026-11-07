@@ -1,12 +1,31 @@
 # vibeslideshow
 
+[![standard-readme compliant](https://img.shields.io/badge/readme%20style-standard-brightgreen.svg?style=flat-square)](https://github.com/RichardLitt/standard-readme)
+
+Desktop editor that cuts your own footage to a song and renders a beat-synced slideshow to MP4.
+
 A native desktop editor that cuts your own footage to a song. Point it at a
 folder of clips, pick a track, pick a look in plain language — and it cuts a
 beat-synced slideshow you can fix by hand, shot by shot, then render to an MP4.
 
 Qt 6 Quick + libmpv. Linux, macOS and Windows; developed on Linux.
 
-## Requirements
+## Table of Contents
+
+- [Install](#install)
+- [Usage](#usage)
+- [Packaging](#packaging)
+- [How it works](#how-it-works)
+- [Three libmpv embedding invariants](#three-libmpv-embedding-invariants)
+- [Files on disk](#files-on-disk)
+- [CI](#ci)
+- [Maintainers](#maintainers)
+- [Contributing](#contributing)
+- [License](#license)
+
+## Install
+
+### Dependencies
 
 - Qt 6.5 or newer (Quick, QuickControls2, GUI) and a working OpenGL driver
 - libmpv 2.x (`libmpv-dev` / `mpv-libs` / `brew install mpv`)
@@ -15,7 +34,7 @@ Qt 6 Quick + libmpv. Linux, macOS and Windows; developed on Linux.
   environment
 - CMake 3.21+ and a C++20 compiler
 
-## Build and run
+### Building from source
 
 ```sh
 ./scripts/build.sh            # Release, into ./build
@@ -37,24 +56,7 @@ Install the binary, desktop entry and icon:
 cmake --install build --prefix ~/.local
 ```
 
-## Packaging
-
-`scripts/package.sh` builds and bundles for the host OS into `dist/`:
-
-| Platform | Produces | Needs |
-|---|---|---|
-| Linux | `vibeslideshow-<ver>-linux-<arch>.tar.gz`, plus `.deb` when `dpkg-deb` exists | Qt ≥ 6.5, libmpv, ffmpeg |
-| macOS | `vibeslideshow-<ver>-macos.zip` and `.dmg` (Qt + libmpv inside the `.app`) | `brew install qt mpv ffmpeg dylibbundler` |
-| Windows | `vibeslideshow-<ver>-windows-x86_64.zip` (Qt, libmpv, ffmpeg inside) | MSYS2 UCRT64 shell with `qt6-base qt6-declarative mpv ffmpeg` |
-
-`--no-build` packages an existing `./build`. The platform scripts are
-`scripts/package-{linux,macos,windows}.sh` and can be run directly.
-
-Both bundles put `ffmpeg`/`ffprobe` beside the executable: an app started from the
-Finder, the Start menu or a `.desktop` file never inherits the user's `PATH`, so
-the code looks next to the binary first (and honours `VIBESLIDESHOW_TOOLS_DIR`).
-
-## Using it
+## Usage
 
 1. **Every launch** starts with one setup popup that asks for the two things the
    app cannot work without: a song, and some footage. A remembered song and
@@ -199,6 +201,23 @@ cut into the selected shot: `H` hard, `[` softer, `]` sharper. `Ctrl+Z` undoes,
 `Ctrl+Shift+Z` redoes. The keys stand down while a text field has focus, and
 while the workspace is locked.
 
+## Packaging
+
+`scripts/package.sh` builds and bundles for the host OS into `dist/`:
+
+| Platform | Produces | Needs |
+|---|---|---|
+| Linux | `vibeslideshow-<ver>-linux-<arch>.tar.gz`, plus `.deb` when `dpkg-deb` exists | Qt ≥ 6.5, libmpv, ffmpeg |
+| macOS | `vibeslideshow-<ver>-macos.zip` and `.dmg` (Qt + libmpv inside the `.app`) | `brew install qt mpv ffmpeg dylibbundler` |
+| Windows | `vibeslideshow-<ver>-windows-x86_64.zip` (Qt, libmpv, ffmpeg inside) | MSYS2 UCRT64 shell with `qt6-base qt6-declarative mpv ffmpeg` |
+
+`--no-build` packages an existing `./build`. The platform scripts are
+`scripts/package-{linux,macos,windows}.sh` and can be run directly.
+
+Both bundles put `ffmpeg`/`ffprobe` beside the executable: an app started from the
+Finder, the Start menu or a `.desktop` file never inherits the user's `PATH`, so
+the code looks next to the binary first (and honours `VIBESLIDESHOW_TOOLS_DIR`).
+
 ## How it works
 
 ```
@@ -281,12 +300,6 @@ earlier call, and mpv refuses to run under a comma-decimal locale.
   video at all (`~/.cache/vibeslideshow/` when the folder is read-only)
 - `~/.cache/vibeslideshow/thumbs/` — rail and timeline thumbnails
 
-## License
-
-GPL-3.0-or-later. See [LICENSE](LICENSE). The app links Qt (LGPL-3.0) and
-libmpv (LGPL-2.1+ / GPL-2.0+ depending on the build); GPL-3.0 is compatible with
-both.
-
 ## CI
 
 `.github/workflows/build.yml` builds and packages all three platforms on every
@@ -298,3 +311,21 @@ tag is pushed:
 - **macos** — `macos-14`, Homebrew Qt/mpv/ffmpeg, `macdeployqt` bundle, zip + dmg
 - **windows** — MSYS2 **UCRT64** (the environment mpv is still built for) with Qt 6,
   libmpv and ffmpeg, `windeployqt` bundle, zip
+
+## Maintainers
+
+- Tamás Vince ([@nemvince](https://github.com/nemvince))
+
+## Contributing
+
+Questions and bug reports go to the [issue
+tracker](https://github.com/nemvince/vibeslideshow/issues). Pull requests are
+welcome — run `./scripts/build.sh` and the packaged bundle for your platform
+before opening one, and leave the three libmpv invariants above alone unless you
+can reproduce the failure they prevent.
+
+## License
+
+GPL-3.0-or-later. See [LICENSE](LICENSE). The app links Qt (LGPL-3.0) and
+libmpv (LGPL-2.1+ / GPL-2.0+ depending on the build); GPL-3.0 is compatible with
+both. © Tamás Vince.
