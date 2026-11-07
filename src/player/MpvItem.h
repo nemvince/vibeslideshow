@@ -81,6 +81,10 @@ public:
     // where a 4K file's cost per cut lives, and the render target shrinks to match
     // on a display big enough for the cap to bind. Neither upscales.
     void setPreviewHeight(int lines);
+    // Exposure in stops for this surface, 0 = as shot. Applied with the same
+    // ffmpeg filter the exporter uses, so the preview and the render match.
+    void setExposure(double ev);
+    double exposure() const { return m_exposure; }
     // Height of the framebuffer in device pixels, as last created by the render
     // thread. 0 until the surface has rendered once.
     int renderHeight() const { return m_state->fboHeight.load(); }
@@ -108,6 +112,9 @@ public slots:
 private:
     friend class MpvRenderer;
     void applyOptions();
+    // Rebuild the one filter chain that carries both the preview cap and the
+    // exposure, and report what mpv actually accepted.
+    void rebuildVideoFilter();
     // Recompute the device-pixel cap from the item's screen; 0 when uncapped.
     void updateCapPixels();
     void maybeLoad();
@@ -124,6 +131,7 @@ private:
     QString m_path;
 
     int m_previewHeight = 0;
+    double m_exposure = 0;
     QString m_previewFilter;
     double m_frameTime = 0;
     double m_buffered = -1;

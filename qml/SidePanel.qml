@@ -3,19 +3,46 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import Vibes 1.0
 
-// The settings panel: six tools, each named after what it does to the video, each
-// with a sentence saying what moving it changes. Nothing here is a bare knob —
-// a control shows its effect in words ("≈ 2.4 s", "quick dissolve"), and the
-// numbers behind it stay in the model.
+// The settings panel: a sidebar of categories, each opening the tools that
+// belong to it. Every control is still named after what it does to the video and
+// shows its effect in words ("≈ 2.4 s", "quick dissolve"); the rail only decides
+// which page of them is in front of you.
 Rectangle {
     id: panel
     color: Theme.panel
     property bool collapsed: false
-    implicitWidth: collapsed ? 36 : Math.round(Math.max(280, Math.min(380, parent.width * 0.245)))
+    implicitWidth: collapsed ? 36 : Math.round(Math.max(340, Math.min(450, parent.width * 0.28)))
+
+    // One entry per settings page. The icon is a glyph from the same picture
+    // language as the toolbar, and the label is the shortest honest name for
+    // what is inside.
+    readonly property var categories: [
+        { id: "track",   label: "Track",   glyph: "\u266B" },
+        { id: "look",    label: "Look",    glyph: "\u25D0" },
+        { id: "cut",     label: "Cut",     glyph: "\u2702" },
+        { id: "footage", label: "Footage", glyph: "\u25A6" },
+        { id: "output",  label: "Output",  glyph: "\u25B6" }
+    ]
+    property string category: "look"
+    readonly property var currentCategory: categories.find(function(c) {
+        return c.id === category
+    }) || categories[0]
+
+    // A page change starts at the top and fades the new tools in, so the old
+    // scroll position never decides what the new page opens on.
+    onCategoryChanged: {
+        flick.contentY = 0
+        pageFade.restart()
+    }
 
     Behavior on implicitWidth { NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
 
     Rectangle { anchors.left: parent.left; width: 1; height: parent.height; color: Theme.line }
+
+    SequentialAnimation {
+        id: pageFade
+        NumberAnimation { target: flick; property: "opacity"; from: 0.55; to: 1; duration: Theme.dur }
+    }
 
     // ---- plain language helpers ------------------------------------------
     function paceWord(v) {
@@ -26,6 +53,10 @@ Rectangle {
     }
     function seconds(v) {
         return (Math.round(v * 10) / 10).toFixed(1) + " s"
+    }
+    function evText(v) {
+        if (Math.abs(v) < 0.05) return "as shot"
+        return (v > 0 ? "+" : "") + v.toFixed(1) + " EV"
     }
     // Beats turned into time, so "longest hold" reads as something you can see on
     // screen instead of a beat count.
@@ -60,6 +91,14 @@ Rectangle {
         if (v < 0.65) return "warm"
         return "bright"
     }
+    // The footage slider: what the editor aims the in-point at.
+    function brightWord(v) {
+        if (v < 20) return "dim"
+        if (v < 45) return "soft"
+        if (v < 70) return "balanced"
+        if (v < 90) return "bright"
+        return "sunlit"
+    }
     function shapeValue() {
         if (studio.filters.arOn !== true) return "any"
         const ar = studio.filters.ar
@@ -85,7 +124,7 @@ Rectangle {
 
         SectionLabel {
             anchors { left: parent.left; leftMargin: 16; verticalCenter: parent.verticalCenter }
-            text: "Tools"
+            text: "Settings"
             color: Theme.dim
             font.pixelSize: 10
         }
@@ -112,35 +151,113 @@ Rectangle {
         }
     }
 
-    // ---- tools ----------------------------------------------------------
-    Flickable {
-        id: flick
-        objectName: "toolsScroll"
+    // ---- categories and tools -------------------------------------------
+    // A rail on the left owns the page choice; the scroll only ever holds one
+    // page, so the panel no longer opens on a wall of ten cards.
+    RowLayout {
         anchors {
             top: panelHeader.bottom
             left: parent.left
             right: parent.right
             bottom: parent.bottom
-            leftMargin: 12
+            leftMargin: 8
             rightMargin: 8
             topMargin: 10
+            bottomMargin: 8
         }
         visible: !panel.collapsed
-        contentHeight: tools.implicitHeight + 14
-        clip: true
-        boundsBehavior: Flickable.StopAtBounds
-        ScrollBar.vertical: ThinScrollBar {}
+        spacing: 4
 
         ColumnLayout {
-            id: tools
-            width: parent.width - 10
-            spacing: 8
+            objectName: "settingsNav"
+            Layout.preferredWidth: 80
+            Layout.minimumWidth: 80
+            Layout.maximumWidth: 80
+            Layout.alignment: Qt.AlignTop
+            spacing: 2
+
+            Repeater {
+                model: panel.categories
+                delegate: Rectangle {
+                    id: navItem
+                    required property var modelData
+
+                    readonly property bool active: panel.category === modelData.id
+
+                    objectName: "settingsNav_" + modelData.id
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 38
+                    radius: 7
+                    color: navItem.active ? Theme.panelHi
+                           : (navHover.hovered ? Theme.panel : "transparent")
+                    Behavior on color { ColorAnimation { duration: Theme.durFast } }
+
+                    Rectangle {
+                        anchors { left: parent.left; leftMargin: 3; verticalCenter: parent.verticalCenter }
+                        width: 2
+                        height: 16
+                        radius: 1
+                        color: Theme.accent
+                        visible: navItem.active
+                    }
+
+                    RowLayout {
+                        anchors { fill: parent; leftMargin: 10; rightMargin: 5 }
+                        spacing: 6
+
+                        Text {
+                            text: navItem.modelData.glyph
+                            color: navItem.active ? Theme.accent : Theme.dim
+                            font.pixelSize: 14
+                            Behavior on color { ColorAnimation { duration: Theme.durFast } }
+                        }
+                        Text {
+                            Layout.fillWidth: true
+                            text: navItem.modelData.label
+                            color: navItem.active ? Theme.ink : Theme.dim
+                            font.pixelSize: 11
+                            elide: Text.ElideRight
+                            Behavior on color { ColorAnimation { duration: Theme.durFast } }
+                        }
+                    }
+
+                    HoverHandler { id: navHover }
+                    MouseArea {
+                        anchors.fill: parent
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: panel.category = navItem.modelData.id
+                    }
+
+                    Accessible.role: Accessible.PageTab
+                    Accessible.name: navItem.modelData.label
+                    Accessible.selected: navItem.active
+                }
+            }
+        }
+
+        Flickable {
+            id: flick
+            objectName: "toolsScroll"
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            Layout.minimumWidth: 0
+            Layout.preferredWidth: 1
+            contentHeight: tools.implicitHeight + 14
+            clip: true
+            boundsBehavior: Flickable.StopAtBounds
+            ScrollBar.vertical: ThinScrollBar {}
+
+            ColumnLayout {
+                id: tools
+                width: flick.width - 10
+                spacing: 8
 
             // ---- track --------------------------------------------------
             // What the analysis heard. These are measurements of the audio, and
             // the edit follows them: movement follows energy, holds follow
             // danceability, and the section map decides where shots breathe.
             ToolCard {
+                visible: panel.category === "track"
                 title: "Track"
                 hint: "Measured from the song itself — this is what the cut follows."
 
@@ -194,6 +311,7 @@ Rectangle {
 
             // ---- look ---------------------------------------------------
             ToolCard {
+                visible: panel.category === "look"
                 title: "Look"
                 hint: "The starting point. Pick one and adjust anything below it."
 
@@ -210,6 +328,17 @@ Rectangle {
                             if (studio.looks[i].active) return studio.looks[i].blurb
                         return "A hand-tuned look."
                     }
+                }
+
+                SliderRow {
+                    label: "Exposure"
+                    valueText: panel.evText(studio.params.exposure)
+                    hint: "Lifts or lowers every shot. 10-bit footage takes the lift before it is converted, so shadows keep their detail."
+                    from: -2
+                    to: 2
+                    step: 0.1
+                    value: studio.params.exposure
+                    onMoved: (v) => studio.setParam("exposure", v)
                 }
 
                 RowLayout {
@@ -256,6 +385,7 @@ Rectangle {
 
             // ---- pace ---------------------------------------------------
             ToolCard {
+                visible: panel.category === "cut"
                 title: "Pace"
                 hint: "How fast the picture moves: how often it cuts, and how short or long a shot is allowed to be."
 
@@ -302,6 +432,7 @@ Rectangle {
 
             // ---- cuts and transitions -----------------------------------
             ToolCard {
+                visible: panel.category === "cut"
                 title: "Cuts & transitions"
                 hint: "What happens at the join, and whether the drop is chopped into a burst."
 
@@ -380,6 +511,7 @@ Rectangle {
             // applied to the edit that is already on screen, not only on the next
             // Generate, and a saved look carries it.
             ToolCard {
+                visible: panel.category === "look"
                 title: "Motion"
                 hint: "Every shot slowly pushes in or pulls out, alternating so two neighbours never drift the same way."
 
@@ -406,8 +538,9 @@ Rectangle {
 
             // ---- footage ------------------------------------------------
             ToolCard {
+                visible: panel.category === "footage"
                 title: "Footage"
-                hint: "Which clips are allowed into the edit. Everything excluded stays visible in the rail, dimmed."
+                hint: "Which clips are allowed into the edit, and what light it cuts into. Excluded clips stay visible in the rail, dimmed."
 
                 SwitchRow {
                     label: "Best clips only"
@@ -446,16 +579,21 @@ Rectangle {
                     onMoved: (v) => studio.setFilter("mvPct", v)
                 }
 
-                SwitchRow {
-                    label: "Skip dark clips"
-                    hint: "Leaves out clips that are mostly black — tunnels, night shots."
-                    checked: studio.filters.junk === true
-                    onToggled: (on) => studio.setFilter("junk", on)
+                SliderRow {
+                    label: "Scene brightness"
+                    valueText: panel.brightWord(studio.filters.sceneBright)
+                    hint: "How bright a moment the edit cuts in. Let go to re-aim the shots already on the strip; Generate re-cuts the film."
+                    from: 0
+                    to: 100
+                    step: 5
+                    value: studio.filters.sceneBright
+                    onMoved: (v) => studio.setFilter("sceneBright", v)
+                    onReleased: studio.reaimScene()
                 }
 
                 SwitchRow {
                     label: "Only one day"
-                    hint: "Uses a single day's footage, for one trip or event."
+                    hint: "Uses a single day's footage, for one trip or event. Days follow the camera's UTC clock."
                     checked: studio.filters.dayOn === true
                     onToggled: (on) => studio.setFilter("dayOn", on)
                 }
@@ -468,7 +606,7 @@ Rectangle {
 
                 SwitchRow {
                     label: "Only daytime"
-                    hint: "Keeps the hours you shot in daylight."
+                    hint: "Keeps the hours you shot in daylight. Camera timestamps are UTC."
                     checked: studio.filters.todOn === true
                     onToggled: (on) => studio.setFilter("todOn", on)
                 }
@@ -560,6 +698,7 @@ Rectangle {
 
             // ---- order --------------------------------------------------
             ToolCard {
+                visible: panel.category === "footage"
                 title: "Order"
                 hint: "The order clips are walked in. Date order tells the story of the shoot; shuffling breaks it up."
 
@@ -613,6 +752,7 @@ Rectangle {
 
             // ---- playback ------------------------------------------------
             ToolCard {
+                visible: panel.category === "output"
                 title: "Playback"
                 hint: "What the preview plays while you work."
 
@@ -661,6 +801,7 @@ Rectangle {
             // What Export… produces unless it is changed for that one run, and
             // what `--render` uses on a project that has never been exported.
             ToolCard {
+                visible: panel.category === "output"
                 title: "Render"
                 hint: "What Export… writes: the frame it encodes into, the rate, and how hard the encoder works."
 
@@ -731,6 +872,7 @@ Rectangle {
 
             // ---- editor -------------------------------------------------
             ToolCard {
+                visible: panel.category === "output"
                 title: "Editor"
                 hint: "How the window behaves from one session to the next."
 
@@ -754,6 +896,7 @@ Rectangle {
             }
 
             Item { Layout.fillHeight: true; implicitHeight: 4 }
+            }
         }
     }
 
@@ -763,8 +906,14 @@ Rectangle {
         visible: panel.collapsed
 
         Text {
+            anchors { horizontalCenter: parent.horizontalCenter; top: parent.top; topMargin: 46 }
+            text: panel.currentCategory.glyph
+            color: Theme.accent
+            font.pixelSize: 16
+        }
+        Text {
             anchors.centerIn: parent
-            text: "TOOLS"
+            text: panel.currentCategory.label.toUpperCase()
             rotation: 90
             color: Theme.faint
             font.pixelSize: 10

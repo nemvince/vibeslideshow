@@ -18,6 +18,9 @@ ColumnLayout {
     property real step: 0.01
     property real value: 0
     signal moved(real value)
+    // Emitted when the handle is let go after a drag (or a click on the track).
+    // Controls whose effect is expensive commit their value here.
+    signal released()
 
     RowLayout {
         Layout.fillWidth: true
@@ -54,6 +57,7 @@ ColumnLayout {
             restoreMode: Binding.RestoreBindingOrValue
         }
         onMoved: row.moved(value)
+        onPressedChanged: if (!pressed) row.released()
     }
 
     Text {

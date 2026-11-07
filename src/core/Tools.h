@@ -2,7 +2,9 @@
 #include <QCoreApplication>
 #include <QDir>
 #include <QFileInfo>
+#include <QStorageInfo>
 #include <QString>
+#include <QStringList>
 
 // External commands the app shells out to: ffmpeg and ffprobe.
 //
@@ -32,6 +34,31 @@ inline QString path(const QString &name) {
         }
     }
     return name;   // not bundled: let the OS resolve it from PATH
+}
+
+// True when the file lives behind a network filesystem. An SD card or USB disk
+// mounted under /media or /mnt is local and must not be treated like a share;
+// the mount's filesystem type is the only way to tell the two apart.
+inline bool isNetworkPath(const QString &path) {
+    if (path.contains(QLatin1String("/gvfs/"))) return true;
+    if (path.startsWith(QLatin1String("//")) || path.startsWith(QLatin1String("\\\\"))) return true;
+
+    const QStorageInfo info(path);
+    const QString fs = QString::fromLocal8Bit(info.fileSystemType()).toLower();
+    if (fs.isEmpty()) {
+        // Unmounted/missing: keep the old prefix guess so a network share that
+        // happens to be down is still not hammered with 20 s of readahead.
+        return path.startsWith(QLatin1String("/mnt/")) || path.startsWith(QLatin1String("/media/"));
+    }
+    static const QStringList networkFs = {
+        QStringLiteral("cifs"), QStringLiteral("smb"), QStringLiteral("smb2"), QStringLiteral("smb3"),
+        QStringLiteral("nfs"), QStringLiteral("nfs4"), QStringLiteral("afp"), QStringLiteral("afpfs"),
+        QStringLiteral("davfs"), QStringLiteral("fuse.sshfs"), QStringLiteral("fuse.rclone"),
+        QStringLiteral("fuse.smbnetfs"), QStringLiteral("fuse.curlftpfs"), QStringLiteral("fuse.davfs"),
+        QStringLiteral("fuse.webdavfs")};
+    for (const QString &net : networkFs)
+        if (fs == net || fs.startsWith(net + QLatin1Char('.'))) return true;
+    return false;
 }
 
 } // namespace tools

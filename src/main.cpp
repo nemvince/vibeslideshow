@@ -52,6 +52,7 @@ int runRender(int argc, char *argv[], const QString &project, const QString &out
                                              : Exporter::Quality::Balanced;
     opt.size = QSize(std::max(2, saved.exportW), std::max(2, saved.exportH));
     opt.fps = std::max(1, saved.exportFps);
+    opt.exposure = saved.exposure;
     if (quality == QLatin1String("draft")) opt.quality = Exporter::Quality::Draft;
     else if (quality == QLatin1String("high")) opt.quality = Exporter::Quality::High;
     else if (quality.isEmpty() || quality == QLatin1String("balanced")) {

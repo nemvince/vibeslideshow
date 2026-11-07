@@ -4,6 +4,7 @@
 #include "ui/ClipModel.h"
 
 #include <QFileInfo>
+#include <QHash>
 #include <QSet>
 #include <algorithm>
 #include <cmath>
@@ -258,6 +259,46 @@ void TimelineModel::applyMoves() {
     // A view setting, not an edit: no snapshot, no bump of the edit counter. Only
     // the stage is told, so the preview and the next render use the new move.
     if (changedAny) emit changed();
+}
+
+bool TimelineModel::reaimInPoints() {
+    if (m_segs.isEmpty() || !m_sched || !m_lib) return false;
+    // Start from every stretch the edit currently uses, then re-aim one shot at a
+    // time: remove its own old range, pick a free stretch, and put that back.
+    // The result can reuse a clip but never the same cut of it.
+    using Range = QPair<double, double>;
+    QHash<int, QList<Range>> used;
+    for (const TlSeg &s : m_segs) used[s.id].append({s.s, s.s + s.len});
+
+    QList<double> next;
+    next.reserve(m_segs.size());
+    bool moved = false;
+    for (const TlSeg &s : m_segs) {
+        QList<Range> &ranges = used[s.id];
+        for (int j = 0; j < ranges.size(); j++) {
+            if (std::abs(ranges[j].first - s.s) < 1e-6 &&
+                std::abs(ranges[j].second - (s.s + s.len)) < 1e-6) {
+                ranges.removeAt(j);
+                break;
+            }
+        }
+        const Clip *c = m_lib->clipById(s.id);
+        const double t = c ? m_sched->seekFree(*c, s.len, ranges) : -1.0;
+        if (t >= 0) {
+            next.append(t);
+            ranges.append({t, t + s.len});
+            if (std::abs(t - s.s) > 1e-6) moved = true;
+        } else {
+            next.append(s.s);
+            ranges.append({s.s, s.s + s.len});   // keep the shot where it was
+        }
+    }
+    if (!moved) return false;   // nothing to commit, nothing to undo
+    pushUndo();
+    for (int i = 0; i < m_segs.size(); i++) m_segs[i].s = next[i];
+    emit dataChanged(index(0, 0), index(m_segs.size() - 1, 0), {SegInRole});
+    touch();
+    return true;
 }
 
 void TimelineModel::adoptEdit(const QList<TlSeg> &segs, const QList<double> &fades) {

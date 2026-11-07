@@ -158,7 +158,7 @@ ApplicationWindow {
             anchors { top: parent.top; bottom: parent.bottom; left: rail.right; right: sidePanel.left }
         }
 
-        // Right: the look (presets in prose) + Advanced, collapsible.
+        // Right: the settings sidebar, collapsible.
         SidePanel {
             id: sidePanel
             anchors { top: parent.top; bottom: parent.bottom; right: parent.right }

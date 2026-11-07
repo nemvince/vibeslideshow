@@ -149,7 +149,7 @@ int ClipModel::rowCount(const QModelIndex &parent) const {
 QHash<int, QByteArray> ClipModel::roleNames() const {
     return {
         {IdRole, "clipId"}, {NameRole, "name"}, {PathRole, "path"}, {DayRole, "day"},
-        {TodRole, "tod"}, {ScoreRole, "score"}, {MvRole, "mv"}, {DarkRole, "dark"},
+        {TodRole, "tod"}, {ScoreRole, "score"}, {MvRole, "mv"},
         {AspectRole, "aspect"}, {DurationRole, "duration"}, {ProxyRole, "proxy"},
         {ThumbRole, "thumb"}, {IndexRole, "rowIndex"}, {FilteredRole, "inPool"},
     };
@@ -167,7 +167,6 @@ QVariant ClipModel::data(const QModelIndex &index, int role) const {
     case TodRole: return c->hasTod ? c->tod : -1.0;
     case ScoreRole: return c->score;
     case MvRole: return c->mv;
-    case DarkRole: return c->dk;
     case AspectRole: return c->ar();
     case DurationRole: return c->duration;
     case ProxyRole: return !c->lrf.isEmpty();

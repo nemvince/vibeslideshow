@@ -1,6 +1,7 @@
 #include "core/Params.h"
 #include <QDateTime>
 #include <QTimeZone>
+#include <algorithm>
 #include <cstdlib>
 
 QVariantMap Params::toMap() const {
@@ -21,7 +22,6 @@ QVariantMap Params::toMap() const {
     m["useLrf"] = useLrf;
     m["mood"] = mood;
     m["shuffle"] = shuffle;
-    m["skipJunk"] = skipJunk;
     m["replicate"] = replicate;
     m["aggrThreshold"] = aggrThreshold;
     m["aggrHalfRun"] = aggrHalfRun;
@@ -36,6 +36,7 @@ QVariantMap Params::toMap() const {
     // The picture.
     m["moveOn"] = moveOn;
     m["moveAmt"] = moveAmt;
+    m["exposure"] = exposure;
     m["cutStep"] = cutStep;
     m["cutMax"] = cutMax;
     // The editor.
@@ -62,6 +63,7 @@ QVariantMap Params::lookMap() const {
 void Params::keepPictureFrom(const Params &o) {
     moveOn = o.moveOn;
     moveAmt = o.moveAmt;
+    exposure = o.exposure;
     cutStep = o.cutStep;
     cutMax = o.cutMax;
 }
@@ -100,7 +102,6 @@ void Params::applyMap(const QVariantMap &m) {
     flag("useLrf", useLrf);
     flag("mood", mood);
     flag("shuffle", shuffle);
-    flag("skipJunk", skipJunk);
     flag("replicate", replicate);
     num("aggrThreshold", aggrThreshold);
     num("aggrHalfRun", aggrHalfRun);
@@ -112,6 +113,7 @@ void Params::applyMap(const QVariantMap &m) {
     num("seed", seed);
     flag("moveOn", moveOn);
     num("moveAmt", moveAmt);
+    num("exposure", exposure);
     num("cutStep", cutStep);
     num("cutMax", cutMax);
     num("exportQuality", exportQuality);
@@ -120,6 +122,9 @@ void Params::applyMap(const QVariantMap &m) {
     num("exportFps", exportFps);
     flag("restoreProject", restoreProject);
     num("undoDepth", undoDepth);
+    // The ffmpeg filter accepts -3..3 stops; a hand-edited project must not make
+    // the render fail on an out-of-range value.
+    exposure = std::clamp(exposure, -3.0, 3.0);
 }
 
 const QList<Preset> &builtinPresets() {

@@ -24,6 +24,7 @@ public:
         QSize size{1920, 1080};
         int fps = 30;
         Quality quality = Quality::Balanced;
+        double exposure = 0;   // EV, applied before the 8-bit conversion
     };
 
     explicit Exporter(QObject *parent = nullptr);

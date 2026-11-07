@@ -52,12 +52,17 @@ public:
     int cutIndex() const { return m_cutIdx; }
     int segmentCount() const { return m_segs.size(); }
     int currentClip() const { return m_currentClip; }
+    // Length of the edit itself. Shorter than the song when the footage ran out.
+    double editEnd() const { return m_editEnd; }
     bool buffering() const { return m_buffering; }
 
     void setScheduler(Scheduler *s) { m_sched = s; }
     // Cap the size of every surface's picture, in lines (0 = native). Applies to
     // the surfaces already attached and to any that attach later.
     void setPreviewHeight(int lines);
+    // Picture exposure in stops (0 = as shot), applied to every surface.
+    void setExposure(double ev);
+    double exposure() const { return m_exposure; }
     void setLibrary(Library *l) { m_lib = l; }
 
     // QML hands over the video surfaces once they exist. The first starts on
@@ -134,6 +139,7 @@ private:
     Library *m_lib = nullptr;
     QList<MpvItem *> m_surfs;
     int m_previewHeight = 0;
+    double m_exposure = 0;
     // Per surface: what it holds — the segment index, the clip it was loaded from
     // and the clip time. All three are needed: an edit can keep an index while
     // swapping the clip or moving its in-point, and a stale frame is not warm.
@@ -155,6 +161,9 @@ private:
     QList<TlSeg> m_segs;
     QList<double> m_cuts;
     QList<double> m_fades;
+    // The edit's own length. It may be shorter than the song when the footage
+    // runs out; playback stops here rather than running past the last shot.
+    double m_editEnd = 0;
 
     int m_cutIdx = 0;          // index of the segment currently on screen
     int m_currentClip = -1;

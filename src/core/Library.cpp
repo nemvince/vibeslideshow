@@ -464,8 +464,7 @@ Library::ScanOutcome scanSources(const QList<MediaSource> &sources, const QSet<Q
 
 
 bool isRemotePath(const QString &path) {
-    return path.contains(QLatin1String("/gvfs/")) || path.startsWith(QLatin1String("//")) ||
-           path.startsWith(QLatin1String("/mnt/")) || path.startsWith(QLatin1String("/media/"));
+    return tools::isNetworkPath(path);
 }
 
 // How many frames a clip will be sampled at. Used for both the work and the exact
@@ -481,13 +480,16 @@ int sampleCount(const Clip &c) {
 }
 
 // Up to 12 evenly spaced 32x18 gray frames, scored for motion, colour, exposure
-// and variety. Pure and thread-safe: shells out to ffmpeg, touches no members.
-// `sampleDone` runs after each frame lands, so progress moves inside a clip too.
-bool scoreClip(const Clip &c, int *score, int *mv, double *dk, const std::function<void()> &sampleDone = {}) {
+// and variety, with each frame's mean luminance kept as a curve over time. Pure
+// and thread-safe: shells out to ffmpeg, touches no members. `sampleDone` runs
+// after each frame lands, so progress moves inside a clip too.
+bool scoreClip(const Clip &c, int *score, int *mv, QList<double> *lum, QList<double> *lumT,
+               const std::function<void()> &sampleDone = {}) {
     const double dur = (c.lrfDur > 0) ? c.lrfDur : c.duration;
     const QString path = (c.lrfDur > 0) ? c.lrf : c.path;
     const int want = sampleCount(c);
     QList<QByteArray> samples;
+    QList<double> times;
     const int px = 32 * 18;
     for (int s = 0; s < want; s++) {
         const double t = std::round(((dur / (want + 1)) * (s + 1)) * 10.0) / 10.0;
@@ -508,6 +510,7 @@ bool scoreClip(const Clip &c, int *score, int *mv, double *dk, const std::functi
         if (p.exitStatus() != QProcess::NormalExit || p.exitCode() != 0) continue;
         if (buf.size() < px * 3) continue;
         samples.append(buf.left(px * 3));
+        times.append(t);
         if (sampleDone) sampleDone();
     }
     if (samples.size() < std::min(3, want)) return false;
@@ -563,10 +566,9 @@ bool scoreClip(const Clip &c, int *score, int *mv, double *dk, const std::functi
 
     *score = int(std::round(100.0 * (0.35 * motion + 0.25 * (colSum / n) + 0.25 * (expSum / n) + 0.15 * variety)));
     *mv = int(std::round(100.0 * motion));
-    int dark = 0;
-    for (double m : means)
-        if (m < 10) dark++;
-    *dk = dark / double(n);
+    // The curve the editor aims at: where in the clip is it bright, and when.
+    if (lum) *lum = means;
+    if (lumT) *lumT = times;
     return true;
 }
 
@@ -791,21 +793,26 @@ void Library::scoreClips(quint64 gen) {
                     std::lock_guard<std::mutex> lock(cacheLock);
                     hit = cache.value(c.path);
                 }
-                const bool cacheOk = hit.value("ver").toInt() == 2 && hit.contains("mv") && hit.contains("dk") &&
-                                     hit.value("s").toLongLong() == sizeNow && hit.value("m").toLongLong() == mtimeNow &&
+                // ver 4: a local card mounted under /media used to be mistaken
+                // for a network share and scored from only five frames. Rescore
+                // so the denser curve and the extra samples are actually used.
+                const bool cacheOk = hit.value("ver").toInt() == 4 && hit.contains("mv") && hit.contains("lum") &&
+                                     hit.contains("lumT") && hit.value("s").toLongLong() == sizeNow &&
+                                     hit.value("m").toLongLong() == mtimeNow &&
                                      (c.lrf.isEmpty() || hit.value("ls").toLongLong() == c.lrfSize);
 
                 Score s;
                 if (cacheOk) {
                     s.score = hit.value("v").toInt();
                     s.mv = hit.value("mv").toInt();
-                    s.dk = hit.value("dk").toDouble();
+                    for (const QVariant &v : hit.value("lum").toList()) s.lum.append(v.toDouble());
+                    for (const QVariant &v : hit.value("lumT").toList()) s.lumT.append(v.toDouble());
                     s.ok = true;
                     unitsDone += sampleCount(c);
                     postFraction();
                 } else {
                     int counted = 0;
-                    s.ok = scoreClip(c, &s.score, &s.mv, &s.dk, [&]() {
+                    s.ok = scoreClip(c, &s.score, &s.mv, &s.lum, &s.lumT, [&]() {
                         ++counted;
                         unitsDone += 1;
                         postFraction();
@@ -814,9 +821,9 @@ void Library::scoreClips(quint64 gen) {
                     // otherwise a failed clip would leave the bar short of 100 %.
                     unitsDone += std::max(0, sampleCount(c) - counted);
                     postFraction();
-                    // Unreadable is not "dark": scoring 0 with dk=1 would let the
-                    // junk filter silently drop a clip the network failed on.
-                    if (!s.ok) { s.score = 0; s.mv = 0; s.dk = 0.25; }
+                    // An unreadable clip scores nothing and keeps no curve, so the
+                    // editor treats it as unmeasured rather than as black footage.
+                    if (!s.ok) { s.score = 0; s.mv = 0; s.lum.clear(); s.lumT.clear(); }
                     // Merge into the entry the probe pass left behind: the commit
                     // must not throw away the duration and dimensions it cached.
                     QVariantMap entry = hit;
@@ -825,8 +832,12 @@ void Library::scoreClips(quint64 gen) {
                     if (!c.lrf.isEmpty()) entry["ls"] = c.lrfSize;
                     entry["v"] = s.score;
                     entry["mv"] = s.mv;
-                    entry["dk"] = s.dk;
-                    entry["ver"] = 2;
+                    QVariantList lum, lumT;
+                    for (double v : s.lum) lum.append(v);
+                    for (double v : s.lumT) lumT.append(v);
+                    entry["lum"] = lum;
+                    entry["lumT"] = lumT;
+                    entry["ver"] = 4;
                     std::lock_guard<std::mutex> lock(cacheLock);
                     cache.insert(c.path, entry);
                 }
@@ -864,7 +875,8 @@ void Library::applyScores(quint64 gen, const QList<Score> &scores) {
     for (int i = 0; i < n; i++) {
         m_clips[i].score = scores[i].score;
         m_clips[i].mv = scores[i].mv;
-        m_clips[i].dk = scores[i].dk;
+        m_clips[i].lum = scores[i].lum;
+        m_clips[i].lumT = scores[i].lumT;
         m_clips[i].scored = scores[i].ok;
     }
     setBusyInternal(false);
@@ -876,7 +888,7 @@ void Library::applyScores(quint64 gen, const QList<Score> &scores) {
 
 QList<Clip> Library::poolFor(const Filters &f) const {
     const QList<SkipWindow> wins = f.skipWindowsOn ? parseWindows(f.skipWindows) : QList<SkipWindow>();
-    const bool anyExclusion = f.junk || (f.dayOn && !f.day.isEmpty()) || f.scoreOn || f.mvOn || f.arOn ||
+    const bool anyExclusion = (f.dayOn && !f.day.isEmpty()) || f.scoreOn || f.mvOn || f.arOn ||
                               (f.todOn && !f.tod.isEmpty()) || !wins.isEmpty();
     // Fast path: nothing enabled at all.
     if (!anyExclusion) return m_clips;
@@ -884,7 +896,6 @@ QList<Clip> Library::poolFor(const Filters &f) const {
     QList<Clip> out;
     out.reserve(m_clips.size());
     for (const Clip &c : m_clips) {
-        if (f.junk && c.dk >= 0.5) continue;              // mostly-dark junk: black flash source
         if (inSkipWindows(c.day, wins)) continue;
         // "only this day" is exclusive: a clip with no readable stamp is not from it.
         if (f.dayOn && !f.day.isEmpty() && c.day != f.day) continue;

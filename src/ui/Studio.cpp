@@ -28,7 +28,7 @@ namespace {
 // The pool filter reaches the UI as a flat map so controls can bind to it.
 QVariantMap filtersToMap(const Filters &f) {
     QVariantMap m;
-    m["junk"] = f.junk;
+    m["sceneBright"] = f.sceneBright;
     m["skipWindowsOn"] = f.skipWindowsOn;
     m["skipWindows"] = f.skipWindows;
     m["dayOn"] = f.dayOn;
@@ -117,7 +117,7 @@ QString localPathFor(const QUrl &url) {
 Filters filtersFromMap(const QVariantMap &m) {
     Filters f;
     if (m.isEmpty()) return f;
-    f.junk = m.value("junk", true).toBool();
+    f.sceneBright = m.value("sceneBright", f.sceneBright).toDouble();
     f.skipWindowsOn = m.value("skipWindowsOn", !f.skipWindows.isEmpty()).toBool();
     f.skipWindows = m.value("skipWindows", f.skipWindows).toString();
     f.dayOn = m.value("dayOn", false).toBool();
@@ -863,6 +863,10 @@ void Studio::reloadLibraryModel() {
 void Studio::syncScheduler() {
     m_sched->setParams(m_params);
     m_sched->setAnalysis(m_analysis);
+    m_sched->setSceneBright(m_filters.sceneBright);
+    // A picture setting: the preview changes as the slider moves, not only on
+    // the next Generate. Show keeps the value for surfaces attached later.
+    if (m_show) m_show->setExposure(m_params.exposure);
     m_sched->reseed();
     // The pool is the filtered set: the walk must never pick an excluded clip.
     // Walk order (chronology, or a seeded shuffle) belongs to the scheduler.
@@ -1029,11 +1033,21 @@ bool Studio::hasEdit() const { return m_timeline->hasTimeline(); }
 
 void Studio::applyFilters(const QVariantMap &m) {
     m_filters = filtersFromMap(m);
+    // The edit that comes with a project was cut under its own filter value;
+    // do not re-aim it the moment the panel is drawn.
+    m_sceneApplied = m_filters.sceneBright;
 }
 
 void Studio::setFilter(const QString &key, const QVariant &value) {
     const double d = value.toDouble();
-    if (key == QLatin1String("junk")) m_filters.junk = value.toBool();
+    if (key == QLatin1String("sceneBright")) {
+        const double v = std::clamp(d, 0.0, 100.0);
+        // Releasing the handle without moving it must not re-roll the edit. The
+        // value is committed on release (reaimScene), so a duplicate move is a
+        // no-op here.
+        if (std::abs(v - m_filters.sceneBright) < 0.001) return;
+        m_filters.sceneBright = v;
+    }
     else if (key == QLatin1String("skipWindowsOn")) m_filters.skipWindowsOn = value.toBool();
     else if (key == QLatin1String("skipWindows")) m_filters.skipWindows = value.toString();
     else if (key == QLatin1String("dayOn")) {
@@ -1077,6 +1091,17 @@ void Studio::setFilter(const QString &key, const QVariant &value) {
 
 // ---- edit ---------------------------------------------------------------
 
+void Studio::reaimScene() {
+    if (!m_timeline->hasTimeline()) return;
+    if (std::abs(m_filters.sceneBright - m_sceneApplied) < 0.001) return;
+    // The filter value is already in the scheduler (setFilter → syncScheduler).
+    // Re-aim the existing shots rather than re-cutting: the picture changes
+    // where it stands, and the order, lengths and clip choices stay untouched.
+    const bool moved = m_timeline->reaimInPoints();
+    m_sceneApplied = m_filters.sceneBright;
+    if (moved) setStatus(QStringLiteral("Scene brightness applied"));
+}
+
 void Studio::generate() {
     if (m_song.isEmpty() || !m_analysis.valid()) {
         setStatus(m_song.isEmpty() ? QStringLiteral("Choose a song first") : QStringLiteral("Still listening…"));
@@ -1106,9 +1131,25 @@ void Studio::generate() {
         return;
     }
     m_editUnscored = m_lib && m_lib->scoreDone() < m_lib->scoreTotal();
+    m_sceneApplied = m_filters.sceneBright;
     m_show->setEdit(m_timeline->segments(), m_timeline->cuts(), m_timeline->fades());
     emit editChanged();
-    setStatus(QStringLiteral("%1 cuts from %2 clips").arg(m_timeline->rowCount()).arg(pool.size()));
+    // How much of the pool the edit actually reached. With a day of footage and a
+    // short song this is the number to look at when a particular moment seems
+    // missing: the generator samples across the whole pool, not just its start.
+    QSet<int> usedClips;
+    double editLen = 0;
+    for (const TlSeg &s : m_timeline->segments()) {
+        usedClips.insert(s.id);
+        editLen += s.len;
+    }
+    QString status = QStringLiteral("%1 cuts · %2 of %3 clips used")
+                         .arg(m_timeline->rowCount())
+                         .arg(usedClips.size())
+                         .arg(pool.size());
+    if (m_timeline->songDuration() > 0 && editLen + 0.25 < m_timeline->songDuration())
+        status += QStringLiteral(" · ends at %1, footage exhausted").arg(formatTime(editLen));
+    setStatus(status);
 }
 
 // ---- export --------------------------------------------------------------
@@ -1140,6 +1181,7 @@ void Studio::exportVideo(const QUrl &file, int quality) {
                            : Exporter::Quality::Balanced;
     opt.size = QSize(std::max(2, m_params.exportW), std::max(2, m_params.exportH));
     opt.fps = std::max(1, m_params.exportFps);
+    opt.exposure = m_params.exposure;
     // A quality picked in the dialog becomes the project's default, so the next
     // export starts where this one did. Not through setParam: that would also
     // detach the look, and export settings are not part of a look.

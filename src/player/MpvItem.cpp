@@ -1,4 +1,5 @@
 #include "player/MpvItem.h"
+#include "core/Tools.h"
 
 #include <QOpenGLContext>
 #include <QQuickWindow>
@@ -95,14 +96,33 @@ void MpvItem::setPreviewHeight(int lines) {
     // a redraw so Qt re-creates this surface's buffer at the new size.
     updateCapPixels();
     update();
+    rebuildVideoFilter();
+}
+
+void MpvItem::setExposure(double ev) {
+    if (std::fabs(m_exposure - ev) < 0.001) return;
+    m_exposure = ev;
+    rebuildVideoFilter();
+    update();
+}
+
+void MpvItem::rebuildVideoFilter() {
     if (!m_mpv) return;
+    QStringList filters;
+    // The same filter the exporter writes into its chain: libavfilter does the
+    // work in float before the frame reaches the display, so a 10-bit source
+    // keeps its headroom. 0 EV means no filter at all.
+    if (std::fabs(m_exposure) > 0.001)
+        filters << QStringLiteral("exposure=exposure=%1").arg(QString::number(m_exposure, 'f', 2));
     // `min(ih,cap)` and not a flat height: a vertical 4K clip is 2160 wide and
     // 3840 tall, so a flat cap would shrink it to a stamp. It also means a file
     // already smaller than the cap is passed through untouched. The comma belongs
     // to the filter expression and has to be escaped for the option parser.
-    const QByteArray chain = m_previewHeight > 0
-        ? QStringLiteral("lavfi=[scale=w=-2:h=min(ih\\,%1):flags=bilinear]").arg(m_previewHeight).toUtf8()
-        : QByteArray();
+    if (m_previewHeight > 0)
+        filters << QStringLiteral("scale=w=-2:h=min(ih\\,%1):flags=bilinear").arg(m_previewHeight);
+    const QByteArray chain = filters.isEmpty()
+        ? QByteArray()
+        : QStringLiteral("lavfi=[%1]").arg(filters.join(QLatin1Char(','))).toUtf8();
     mpv_set_property_string(m_mpv, "vf", chain.constData());
     char *applied = mpv_get_property_string(m_mpv, "vf");
     m_previewFilter = applied ? QString::fromUtf8(applied) : QString();
@@ -172,8 +192,7 @@ void MpvItem::setReadahead(double readaheadSecs) {
     // Readahead defaults assume a local disk. On a network mount, asking for 20 s
     // of buffer means the reader competes with the decoder for a slow link and
     // the picture stalls on the frame it already had.
-    const bool remote = m_path.contains(QLatin1String("/gvfs/")) || m_path.startsWith(QLatin1String("//")) ||
-                        m_path.startsWith(QLatin1String("/mnt/")) || m_path.startsWith(QLatin1String("/media/"));
+    const bool remote = tools::isNetworkPath(m_path);
     const double secs = readaheadSecs > 0 ? readaheadSecs : (remote ? 4.0 : 20.0);
     const QByteArray secsText = QByteArray::number(secs, 'f', 1);
     mpv_set_property_string(m_mpv, "demuxer-readahead-secs", secsText.constData());

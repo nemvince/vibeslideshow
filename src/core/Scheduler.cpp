@@ -1,4 +1,5 @@
 #include "core/Scheduler.h"
+#include <QHash>
 #include <QSet>
 #include <algorithm>
 #include <cmath>
@@ -45,7 +46,6 @@ double Scheduler::fadeFor(double t) const {
 QList<int> Scheduler::dropBestIds() const {
     QList<Clip> pick;
     for (const Clip &c : m_pool) {
-        if (m_p.skipJunk && c.dk >= 0.5) continue;
         if (c.score < 8) continue;
         pick.append(c);
     }
@@ -164,7 +164,9 @@ Cuts Scheduler::buildCuts(double songDuration) const {
         }
 
         const bool dropHere = dropT.contains(bts[i]) && !dropBest.isEmpty();
-        cutPick.append(dropHere ? dropBest[dropRank++ % dropBest.size()] : -1);
+        // Spread the drop openers across the ranked best clips; once the list
+        // runs out the walk supplies one.
+        cutPick.append(dropHere && dropRank < dropBest.size() ? dropBest[dropRank++] : -1);
 
         // Land the walk exactly on the next drop's opening beat.
         int i2 = (i + hold >= nB) ? nB : i + hold;
@@ -374,6 +376,103 @@ double Scheduler::dur2seek(const Clip &c, double len, double r) {
     return r * std::max(0.0, d - len - 0.1);
 }
 
+double Scheduler::seekFree(const Clip &c, double len, const QList<QPair<double, double>> &blocked,
+                           double *lum) {
+    if (lum) *lum = 0;
+    const double dur = (m_p.useLrf && c.lrfDur > 0) ? c.lrfDur : c.duration;
+    const double maxStart = std::max(0.0, dur - len - 0.1);
+    if (maxStart <= 0.0) return -1;   // the clip cannot hold a shot this long
+
+    // Merge the stretches already used, then turn each gap into the range of
+    // start times whose whole shot stays inside that gap.
+    QList<QPair<double, double>> cuts;
+    cuts.reserve(blocked.size());
+    for (auto r : blocked) {
+        const double a = std::max(0.0, r.first), e = std::min(dur, r.second);
+        if (e > a) cuts.append({a, e});
+    }
+    std::sort(cuts.begin(), cuts.end());
+    QList<QPair<double, double>> starts;
+    double cursor = 0;
+    auto addGap = [&](double a, double e) {
+        const double lo = std::max(a, 0.0);
+        const double hi = std::min(e - len, maxStart);
+        if (hi + 1e-6 >= lo) starts.append({lo, hi});
+    };
+    for (auto r : cuts) {
+        if (r.first > cursor) addGap(cursor, r.first);
+        cursor = std::max(cursor, r.second);
+    }
+    if (cursor < dur) addGap(cursor, dur);
+    if (starts.isEmpty()) return -1;
+
+    auto isFree = [&](double s) {
+        for (auto r : starts)
+            if (s >= r.first - 1e-6 && s <= r.second + 1e-6) return true;
+        return false;
+    };
+    auto randomFree = [&]() {
+        double total = 0;
+        for (auto r : starts) total += std::max(0.0, r.second - r.first);
+        if (total <= 0) return starts.last().second;
+        double pick = rnd() * total;
+        for (auto r : starts) {
+            const double w = std::max(0.0, r.second - r.first);
+            if (pick <= w) return r.first + pick;
+            pick -= w;
+        }
+        return starts.last().second;
+    };
+
+    // No brightness curve yet (the scan is still running): any free stretch.
+    if (c.lum.isEmpty() || c.lum.size() != c.lumT.size()) return randomFree();
+
+    const double target = sceneTargetLum();
+    double bestCost = std::numeric_limits<double>::max();
+    double bestStart = -1, bestLum = 0;
+    auto consider = [&](double s) {
+        if (!isFree(s)) return;
+        double sum = 0;
+        int n = 0;
+        for (int j = 0; j < c.lum.size(); j++) {
+            if (c.lumT[j] >= s && c.lumT[j] <= s + len) {
+                sum += c.lum[j];
+                n++;
+            }
+        }
+        double b = 0;
+        if (n) {
+            b = sum / n;
+        } else {
+            // The shot is shorter than the gap between samples: take the sample
+            // nearest the middle of the window.
+            double nearest = std::numeric_limits<double>::max();
+            const double mid = s + len * 0.5;
+            for (int j = 0; j < c.lum.size(); j++) {
+                const double d = std::fabs(c.lumT[j] - mid);
+                if (d < nearest) { nearest = d; b = c.lum[j]; }
+            }
+        }
+        // A little noise keeps equally bright stretches from always choosing the
+        // same frame when the clip comes round again.
+        const double cost = std::fabs(b - target) + rnd() * 3.0;
+        if (cost < bestCost) { bestCost = cost; bestStart = s; bestLum = b; }
+    };
+
+    // Anchor on each scored frame, then sample the free stretches themselves so
+    // a bright moment next to an already-used range is still a candidate.
+    for (int i = 0; i < c.lum.size(); i++)
+        consider(std::clamp(c.lumT[i] - len * 0.5, 0.0, maxStart));
+    for (auto r : starts) {
+        consider(r.first);
+        consider(r.second);
+        if (r.second > r.first + 1e-6) consider(r.first + rnd() * (r.second - r.first));
+    }
+    if (bestStart < 0) return randomFree();
+    if (lum) *lum = bestLum;
+    return bestStart;
+}
+
 const Clip *Scheduler::pickNeighbour(const QList<Clip> &base, int replaceId, int prevId, int nextId) {
     if (base.isEmpty()) return nullptr;
     for (int tr = 0; tr < 10; tr++) {
@@ -388,69 +487,109 @@ const Clip *Scheduler::pickNeighbour(const QList<Clip> &base, int replaceId, int
 QList<TlSeg> Scheduler::materialize(double songDuration, const QList<Clip> &baseIn, Cuts *cutsOut) {
     const Cuts cc = (m_a.valid()) ? buildCuts(songDuration) : Cuts{{fallbackGrid(songDuration)}, {}, {}};
     if (cutsOut) *cutsOut = cc;
-    if (cc.times.size() < 2) return {};
+    if (cc.times.isEmpty()) return {};
 
     QList<Clip> base = baseIn.isEmpty() ? m_pool : baseIn;
     if (base.isEmpty()) return {};
 
     constexpr double TL_MIN = 0.05;
+    constexpr int LOOKAHEAD = 4;
     QList<TlSeg> segs;
+    segs.reserve(cc.times.size());
+
+    // A clip may come round more than once, but never with the same stretch of
+    // footage: the ranges used so far are kept per clip and every new shot must
+    // start in a gap. When no clip can supply the next shot, the edit ends
+    // early — a shorter film is a finished film.
+    using Range = QPair<double, double>;
+    QHash<int, QList<Range>> used;
+    const int n = base.size();
+    int pos = 0;
+    // A song asks for far fewer shots than a day of footage has clips. Walking
+    // every clip would use only the first few hundred of them (the morning) and
+    // never reach the afternoon. Step through the pool instead, so the edit
+    // samples the whole shoot; when there are more shots than clips the stride
+    // is one and the walk simply comes round again.
+    const int stride = std::max(1, (n + int(cc.times.size()) - 1) / std::max(1, int(cc.times.size())));
+    const int window = std::min(n, std::max(LOOKAHEAD, stride));
+
     for (int i = 0; i < cc.times.size(); i++) {
         const double end = (i + 1 < cc.times.size()) ? cc.times[i + 1] : songDuration;
-        segs.append({-1, 0, std::max(TL_MIN, end - cc.times[i])});
-    }
+        const double len = std::max(TL_MIN, end - cc.times[i]);
 
-    // The walk stays chronological, but not blindly so: for each segment we look a
-    // few clips ahead and take the one whose movement matches the section, then
-    // keep walking from there. The chosen clip is swapped to the front of the
-    // window, so nothing is skipped and the order stays reproducible.
-    constexpr int LOOKAHEAD = 4;
-    QStringList used;
-    int pos = 0;
-    for (int i = 0; i < segs.size(); i++) {
         // A pick means the cut itself names the clip: drop openers land on the
         // best-scored shot on purpose, and the chronological walk is not consumed.
         const int pick = (i < cc.picks.size()) ? cc.picks[i] : -1;
+        bool picked = false;
         if (pick >= 0) {
             for (const Clip &p : base) {
                 if (p.id != pick) continue;
-                segs[i].id = p.id;
-                segs[i].s = dur2seek(p, segs[i].len, rnd());
+                const double start = seekFree(p, len, used.value(p.id));
+                if (start < 0) break;   // every stretch of this clip is spent
+                TlSeg seg;
+                seg.id = p.id;
+                seg.len = len;
+                seg.s = start;
+                seg.move = moveFor(i, cc.times.value(i, 0));
+                segs.append(seg);
+                used[p.id].append({start, start + len});
+                picked = true;
                 break;
             }
-            if (segs[i].id >= 0) {
-                segs[i].move = moveFor(i, cc.times.value(i, 0));
-                continue;
-            }
         }
+        if (picked) continue;
 
-        // Candidates: the next few clips, minus the near-black ones. A clip that
-        // has not been scored yet is not "bad" — the edit is generated as soon as
-        // the scan finishes so there is something to look at while scoring runs.
+        // Candidates: the next few clips in the walk, then the whole pool when
+        // that window has no free footage left. Scored clips whose samples all
+        // failed have no picture to cut into; an unscored clip is still being
+        // read and is perfectly usable.
         int chosen = -1;
         double bestCost = std::numeric_limits<double>::max();
+        double chosenStart = 0;
         const double want = wantedMotion(cc.times.value(i, 0));
-        for (int k = 0; k < LOOKAHEAD && pos + k < base.size(); k++) {
-            const Clip &cand = base[pos + k];
-            if (cand.scored && cand.score < 8) continue;
-            // Movement first, then how recently this clip was used: a short pool
-            // must repeat clips before it repeats them back to back.
-            const double cost = std::fabs(cand.mv / 100.0 - want) * 2.0
-                                + (used.lastIndexOf(QString::number(cand.id)) >= 0 ? 0.6 : 0.0);
-            if (cost < bestCost) {
-                bestCost = cost;
-                chosen = pos + k;
+        const double targetLum = sceneTargetLum();
+        auto scan = [&](int count) {
+            for (int k = 0; k < count; k++) {
+                const int idx = (pos + k) % n;
+                const Clip &cand = base[idx];
+                if (cand.scored && cand.lum.isEmpty()) continue;
+                double candLum = 0;
+                const double start = seekFree(cand, len, used.value(cand.id), &candLum);
+                if (start < 0) continue;
+                // Movement first, then whether the footage can offer the wanted
+                // light at all. A clip is not punished for having a bright moment
+                // just because the target is darker.
+                const double shortfall = std::max(0.0, targetLum - candLum) / 255.0 * 3.0;
+                const double cost = std::fabs(cand.mv / 100.0 - want) * 2.0
+                                    + (cand.lum.isEmpty() ? 0.0 : shortfall);
+                if (cost < bestCost) {
+                    bestCost = cost;
+                    chosen = idx;
+                    chosenStart = start;
+                }
             }
-        }
-        if (chosen < 0) chosen = pos % base.size();   // everything looked bad: take the next one
-        std::swap(base[pos], base[chosen]);
+        };
+        scan(window);
+        if (chosen < 0) scan(n);   // the next stride is spent: search the whole pool
+        if (chosen < 0) break;     // no unused stretch left in any clip
+
+        if (chosen != pos) std::swap(base[pos], base[chosen]);
         const Clip &c = base[pos];
-        segs[i].id = c.id;
-        segs[i].s = dur2seek(c, segs[i].len, rnd());
-        segs[i].move = moveFor(i, cc.times.value(i, 0));
-        if (used.size() < base.size()) used.append(QString::number(c.id));
-        pos++;
-        if (pos >= base.size()) { pos = 0; used.clear(); }
+        TlSeg seg;
+        seg.id = c.id;
+        seg.len = len;
+        seg.s = chosenStart;
+        seg.move = moveFor(i, cc.times.value(i, 0));
+        segs.append(seg);
+        used[c.id].append({chosenStart, chosenStart + len});
+        pos = (pos + stride) % n;
+    }
+
+    // The schedule the caller gets describes the shots that were actually cut.
+    if (cutsOut) {
+        cutsOut->times = cc.times.mid(0, segs.size());
+        cutsOut->picks = cc.picks.mid(0, segs.size());
+        cutsOut->fades = cc.fades.mid(0, segs.size());
     }
     return segs;
 }

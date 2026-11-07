@@ -140,6 +140,10 @@ public:
     Q_INVOKABLE void applyPreset(const QString &name);
     Q_INVOKABLE void setParam(const QString &key, const QVariant &value);
     Q_INVOKABLE void setFilter(const QString &key, const QVariant &value);
+    // Re-aim the shots already on the strip at the scene brightness slider's
+    // current value. Called when the handle is released, so the control has a
+    // visible effect without waiting for Generate.
+    Q_INVOKABLE void reaimScene();
     Q_INVOKABLE void generate();
     Q_INVOKABLE void playPause();
     Q_INVOKABLE void stopShow();
@@ -232,6 +236,9 @@ private:
     Params m_params;
     Analysis m_analysis;
     Filters m_filters;
+    // The brightness the edit on the strip was last aimed at. Releasing the
+    // slider re-aims only when this differs from the filter's value.
+    double m_sceneApplied = 60;
     int m_previewHeight = 0;
     QString m_activePreset;
     // Name of a saved look when one is in use; empty while a preset is active.

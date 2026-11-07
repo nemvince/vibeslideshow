@@ -75,8 +75,13 @@ RunResult renderShot(const RenderSeg &s, int index, double padMs, const Exporter
     // 4:2:0 chroma.
     const int padX = ((outW - sw) / 2) & ~1;
     const int padY = ((outH - sh) / 2) & ~1;
-    QString chain = QStringLiteral("fps=%1,scale=%2:%3:flags=bicubic")
-                        .arg(QString::number(opt.fps), QString::number(sw), QString::number(sh));
+    QString chain = QStringLiteral("fps=%1").arg(QString::number(opt.fps));
+    // Exposure is applied while the frame is still at the source's bit depth:
+    // the filter works in float, so a 10-bit clip is lifted before anything is
+    // quantised to the 8-bit output. At 0 EV the filter is left out entirely.
+    if (std::fabs(opt.exposure) > 0.001)
+        chain += QStringLiteral(",exposure=exposure=%1").arg(num(opt.exposure, 3));
+    chain += QStringLiteral(",scale=%1:%2:flags=bicubic").arg(QString::number(sw), QString::number(sh));
     // A still shot has nothing to interpolate: the zoompan is left out entirely,
     // which is what "move the shots" being off costs (nothing) and saves (a filter
     // over every frame).

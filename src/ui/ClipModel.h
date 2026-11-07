@@ -21,7 +21,7 @@ class ClipModel : public QAbstractListModel {
 public:
     enum Roles {
         IdRole = Qt::UserRole + 1,
-        NameRole, PathRole, DayRole, TodRole, ScoreRole, MvRole, DarkRole,
+        NameRole, PathRole, DayRole, TodRole, ScoreRole, MvRole,
         AspectRole, DurationRole, ProxyRole, ThumbRole, IndexRole, FilteredRole
     };
     explicit ClipModel(QObject *parent = nullptr);

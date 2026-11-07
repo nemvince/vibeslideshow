@@ -86,7 +86,8 @@ private:
     struct Score {
         int score = 0;
         int mv = 0;
-        double dk = 1;
+        QList<double> lum;
+        QList<double> lumT;
         bool ok = false;
     };
 

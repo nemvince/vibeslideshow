@@ -102,6 +102,10 @@ public:
     // turning movement off (or down) must be visible at once, not on the next
     // Generate.
     Q_INVOKABLE void applyMoves();
+    // Re-aim every shot's in-point at the current scene brightness without
+    // re-cutting: the slider must show its effect on the edit that is on screen.
+    // One undo step; false when no in-point moved.
+    bool reaimInPoints();
     // Replace the whole edit with one loaded from a document. No history: it is a
     // different edit, not a step inside this one.
     void adoptEdit(const QList<TlSeg> &segs, const QList<double> &fades);

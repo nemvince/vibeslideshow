@@ -84,21 +84,27 @@ the code looks next to the binary first (and honours `VIBESLIDESHOW_TOOLS_DIR`).
    — a clip, or a whole import via **Project…** — takes its shots out of the
    edit and hands their time to the last shot, so the song stays covered; a
    removed clip stays out on later rescans until you import it again.
-5. The panel on the right is a set of tools, each named after what it does to the
-   video and each saying its effect in words instead of a raw number:
+5. The panel on the right is a settings sidebar. A rail of categories — Track,
+   Look, Cut, Footage and Output — opens one page of tools at a time; every tool
+   is named after what it does to the video and says its effect in words instead
+   of a raw number:
 
    | Tool                   | What it decides                                                                                        |
    | ---------------------- | ------------------------------------------------------------------------------------------------------ |
    | **Track**              | what the analysis heard: tempo, key, energy, danceability, mood, level                                 |
-   | **Look**               | the preset to start from, and saving the current settings as one                                       |
+   | **Look**               | the preset to start from, the exposure of the picture, and saving the current settings as one          |
    | **Pace**               | how often it cuts, the shortest shot, the longest hold, and whether it follows the song's sections     |
    | **Cuts & transitions** | how joins look, the step and ceiling for one cut, and the stutter burst at a drop                      |
    | **Motion**             | whether every shot moves at all, and how far a push or pull may go                                     |
-   | **Footage**            | which clips may be used: score, movement, darkness, a single day, daytime hours, skipped dates, aspect |
+   | **Footage**            | which clips may be used: score, movement, scene brightness, a single day, daytime hours, skipped dates, aspect |
    | **Order**              | date order or shuffled, and whether the edit is reproducible from a seed                               |
    | **Playback**           | whether the preview plays the low-res proxies, and the size it plays at                                |
    | **Render**             | the frame, rate and encoder settings **Export…** and `--render` use                                    |
    | **Editor**             | whether the last project reopens on launch, and how many undo steps are kept                           |
+
+   The rail groups them as **Track**; **Look** with Motion; **Cut** with Pace and
+   Cuts & transitions; **Footage** with Order; and **Output** with Playback,
+   Render and Editor.
 
    **Preview size** (in the Playback tool) caps how big a picture the preview
    produces — full, 1080, 720 or 540 lines — and applies the moment you pick it.
@@ -108,8 +114,15 @@ the code looks next to the binary first (and honours `VIBESLIDESHOW_TOOLS_DIR`).
 
    Readouts are human: a hold is "up to 2.4 s" at the song's tempo, a transition
    is "quick dissolve · 120 ms", and the footage tool says how many of the
-   library's clips survive the filters. The panel scrolls, and collapses to its
-   title when you want the stage wider.
+   library's clips survive the filters. Each page scrolls if it needs to, and the
+   whole panel collapses to its current category's icon and name when you want
+   the stage wider.
+
+   **Scene brightness** is a target, not a clip filter. Every clip stays in the
+   pool, and the edit aims its in-point at the stretch whose light comes closest
+   to what the slider asks for — so a night shot contributes its brightest
+   moment instead of being skipped. A clip that cannot offer that light is
+   simply less likely to be picked while brighter footage is available.
 
    The **Track** card is the analysis talking: tempo, key and mode (Krumhansl
    profile correlation over the chroma of the decoded audio), energy (loudness ×
@@ -145,6 +158,18 @@ the code looks next to the binary first (and honours `VIBESLIDESHOW_TOOLS_DIR`).
    Generating a new edit starts the history over; importing or removing footage
    is outside it, because a rescan renumbers the clips the edit names.
 
+   Generate never reuses a cut: a clip can come round again, but each shot is a
+   different stretch of it, so no moment of footage appears twice. If the song
+   asks for more shots than the footage can supply, the edit ends at the last
+   shot it could make instead of repeating what it has already shown. The strip
+   leaves the rest of the song uncovered, playback stops at the film's own end,
+   and the export is cut to that length; the status line says where a short edit
+   ended and how many of the available clips it reached.
+
+   Shots are spread across the whole ordered pool rather than walked from its
+   start: a day of footage on a card is sampled from the morning through the
+   evening, even when the song only needs a fraction of the clips.
+
    Each shot also gets a slow move — the camera pushing in or pulling out, a
    couple of percent to about a thirteenth, chosen by whether the music is loud,
    building or chillin — alternating direction shot to shot so two neighbours
@@ -152,6 +177,13 @@ the code looks next to the binary first (and honours `VIBESLIDESHOW_TOOLS_DIR`).
    bakes it in. The **Motion** tool turns it off entirely (a still frame per
    shot) and scales how far it goes; either one lands on the edit that is already
    on screen, not only on the next Generate.
+
+   **Exposure** in the Look card brightens or darkens every shot in stops
+   (`as shot` by default). It is applied while the frame is still at the source's
+   bit depth: on 10-bit DJI footage the lift happens in float before the 8-bit
+   render, so shadows keep the detail an 8-bit lift would lose. The preview
+   updates as the slider moves, and the exporter uses the same filter, so what
+   you see is what is written.
 
    How two shots join is per cut: `H` makes the cut into the selected shot hard,
    `[` softens it and `]` sharpens it again. How far one press moves a cut, and

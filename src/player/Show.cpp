@@ -52,6 +52,11 @@ void Show::setPreviewHeight(int lines) {
     for (MpvItem *s : m_surfs) s->setPreviewHeight(m_previewHeight);
 }
 
+void Show::setExposure(double ev) {
+    m_exposure = ev;
+    for (MpvItem *s : m_surfs) s->setExposure(m_exposure);
+}
+
 void Show::attachSurfaces(const QVariantList &surfaces) {
     m_surfs.clear();
     m_holdSeg.clear();
@@ -67,7 +72,10 @@ void Show::attachSurfaces(const QVariantList &surfaces) {
     m_frontIdx = m_surfs.isEmpty() ? -1 : 0;
     m_outgoingIdx = -1;
     // The session restores before the stage exists, so the cap arrives here too.
-    for (MpvItem *s : m_surfs) s->setPreviewHeight(m_previewHeight);
+    for (MpvItem *s : m_surfs) {
+        s->setPreviewHeight(m_previewHeight);
+        s->setExposure(m_exposure);
+    }
     if (auto *f = frontSurface()) f->setPaused(true);
 }
 
@@ -147,8 +155,13 @@ void Show::setEdit(const QList<TlSeg> &segs, const QList<double> &cuts, const QL
     m_segs = segs;
     m_cuts = cuts;
     m_fades = fades;
+    m_editEnd = 0;
+    for (const TlSeg &s : m_segs) m_editEnd += s.len;
     emit segmentsChanged();
     emitReadyChanged();
+    // A shorter edit can leave the playhead beyond its end; bring the song with
+    // it instead of letting the next play start in the uncovered tail.
+    if (m_editEnd > 0 && m_pos > m_editEnd) seek(m_editEnd);
     // The picture follows the edit at once. Without this the stage keeps the frame
     // it was holding until something else seeks, so a swap or a chop looks like it
     // did nothing until you touch the strip.
@@ -341,6 +354,14 @@ double Show::expectedVideoTime(int idx, double songTime) const {
 
 void Show::play() {
     if (!m_audio || !ready() || m_surfs.isEmpty()) return;
+    // Play from the end starts the film again, whether the edit filled the song
+    // or stopped early for lack of footage.
+    if (m_editEnd > 0 && m_pos >= m_editEnd - 0.01) {
+        const char *cmd[] = {"seek", "0", "absolute+exact", nullptr};
+        mpv_command(m_audio, cmd);
+        setPos(0);
+        m_cutIdx = 0;
+    }
     int pause = 0;
     mpv_set_property(m_audio, "pause", MPV_FORMAT_FLAG, &pause);
     m_playing = true;
@@ -442,6 +463,9 @@ void Show::stop() {
 
 void Show::seek(double t) {
     if (!m_audio) return;
+    // Seeking into the tail past a short edit has nothing to show: land on the
+    // last frame instead.
+    if (m_editEnd > 0) t = std::clamp(t, 0.0, m_editEnd);
     const QByteArray v = QByteArray::number(t, 'f', 3);
     const char *cmd[] = {"seek", v.constData(), "absolute+exact", nullptr};
     mpv_command(m_audio, cmd);
@@ -660,10 +684,13 @@ void Show::tick() {
         }
     }
 
-    // The song ran out: land on the play button instead of a stale picture.
-    if (m_dur > 0 && m_pos >= m_dur - 0.12) {
+    // The edit ran out: a film that does not fill the whole song ends here, on
+    // the play button rather than a stale picture. When it does fill the song the
+    // two are the same time.
+    const double end = m_editEnd > 0 ? m_editEnd : m_dur;
+    if (end > 0 && m_pos >= end - 0.12) {
         pause();
-        setPos(m_dur);
+        setPos(end);
     }
 }
 

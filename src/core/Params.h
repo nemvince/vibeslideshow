@@ -23,7 +23,6 @@ struct Params {
     bool useLrf = true;
     bool mood = true;
     bool shuffle = false;
-    bool skipJunk = true;
     bool replicate = true;
     double aggrThreshold = 0.85;
     int aggrHalfRun = 3;
@@ -41,6 +40,7 @@ struct Params {
     // preset switch leaves them alone.
     bool moveOn = true;      // move every shot (Ken Burns)
     double moveAmt = 1.0;    // 0..1, how far a shot is pushed or pulled
+    double exposure = 0;     // EV, applied to every shot in the preview and the render
     int cutStep = 40;        // ms `[` and `]` move a single cut by
     int cutMax = 500;        // longest one cut may dissolve for, ms
 
@@ -89,7 +89,10 @@ TodRange todRange(double a, double b);
 
 // Everything the pool filter needs besides the clip list itself.
 struct Filters {
-    bool junk = true;             // skip mostly-dark clips
+    // How bright a scene the edit looks for, 0..100. Not a clip filter: the
+    // editor stays inside every clip and aims its in-point at the stretch that
+    // matches this, so dark footage contributes its brightest moments.
+    double sceneBright = 60;
     bool skipWindowsOn = false;   // apply the date windows below
     QString skipWindows;          // date windows
     bool dayOn = false;

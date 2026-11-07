@@ -20,7 +20,11 @@ struct Clip {
 
     int score = 0;
     int mv = 0;
-    double dk = 0;
+    // Mean luminance (0..255) of each scored frame, and when it was taken. The
+    // editor cuts into the stretch that best matches the brightness the user
+    // asked for, which is how a dark clip still contributes its brightest part.
+    QList<double> lum;
+    QList<double> lumT;
     bool scored = false;
 
     double ar() const { return (w > 0 && h > 0) ? (w / double(h)) : 0.0; }
